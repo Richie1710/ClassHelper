@@ -1533,6 +1533,42 @@ FRAMES.ClassHelperBuff_pal_seal.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_sea
 FRAMES.ClassHelperBuff_pal_bless1.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_bless1)
 FRAMES.ClassHelperBuff_pal_rf.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_rf)
 FRAMES.ClassHelperBuff_pal_hs.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_hs)
+-- aura: only my own counts (stance bar active flag, else an aura buff cast by me)
+local DE = GetLocale() == "deDE"
+local function tipText(k) local before = #OUT; FRAMES["ClassHelperBuff_" .. k].__scripts.OnEnter(FRAMES["ClassHelperBuff_" .. k]); return table.concat(OUT, "\n", before + 1) end
+AURAS.player = {}; upd()
+check(isRed(B("pal_aura")), "no aura: red")
+local tip = tipText("pal_aura")
+check(tip:find(DE and "Keine Aura aktiv" or "No aura active", 1, true) and not tip:find(DE and "Andere Aura" or "Another aura", 1, true), "tooltip: no aura active (not 'another'): " .. tip)
+check(tip:find(DE and "Eigene Vorgabe" or "Own default", 1, true), "tooltip names the source (own default): " .. tip)
+AURAS.player = { { S(48942), 0, 0, 48942, "raid2" } }; upd()
+check(isRed(B("pal_aura")), "another paladin's Devotion Aura on me: not mine, red")
+PLAYER_FORM = 465; AURAS.player = {}; upd()
+check(isGreen(B("pal_aura")), "stance bar: my Devotion Aura active: green")
+PLAYER_FORM = 7294; upd()
+check(isYellow(B("pal_aura")) and tipText("pal_aura"):find(DE and "Andere Aura aktiv" or "Another aura is active", 1, true), "my Retribution Aura instead of Devotion: yellow, 'another aura'")
+PLAYER_FORM = nil
+-- Drums of Forgotten Kings count as Kings
+AURAS.player = { { S(72586), 0, GetTime() + 1800, 72586 } }; upd()
+check(isGreen(B("pal_bless1")), "Blessing of Forgotten Kings (drums) counts as Kings")
+-- one aura scan per update, however many entries ask
+local scans = M.palAuraScans; upd(5)
+check(M.palAuraScans - scans <= 5, "at most one player aura scan per update: " .. (M.palAuraScans - scans))
+AURAS.player = {}; upd()
+-- buff bar layout skipped in combat (/reload in combat): done after combat
+FRAMES.ClassHelperBuff_pal_hs:Hide()
+INCOMBAT = true; M.Pal.LayoutBuffs(M.activeRota)
+check(M.palLayoutPending and not buffShown("pal_hs"), "layout in combat: pending, nothing touched")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(not M.palLayoutPending and buffShown("pal_hs"), "layout done after combat")
+-- the AoE seal entry: Righteousness when Seal of Command is unknown
+KNOWN[20375] = false; Slash("aoe an"); upd()
+check(B("pal_seal").__attr.spell == S(21084), "Seal of Command unknown: AoE mode wants Righteousness")
+Slash("aoe aus"); KNOWN[20375] = nil; upd()
+-- option names follow /ch lang (functions, not fixed at file load)
+Slash("lang en"); check(o.args.paladin.args.palAoe.name() == "AoE mode (Seal of Command, AoE priorities)" and o.args.paladin.name() == "Paladin", "options in English after /ch lang en")
+check(o.args.paladinProtTaunt.name() == "Protection: taunt" and o.args.palret.args.palRetWait.name() == "Retribution: wait tolerance (s)", "Prot/Ret options in English too")
+Slash("lang auto"); check(o.args.paladin.args.palAoe.name():find(DE and "AoE-Modus" or "AoE mode", 1, true), "options follow the client language again")
 -- empty recommendation: nothing glows, one-button idle
 local orig = M.PalProtReco
 M.PalProtReco = function() return nil end; upd()
@@ -1580,6 +1616,11 @@ PLAYER_TALENTS = { 51, 5, 15 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
 check(M.activeRota == "holy" and not ClassHelperFrame.__shown, "Holy: rotation bar hidden")
 check(FRAMES.ClassHelperBuffBar.__shown and buffShown("pal_seal") and not buffShown("pal_hs"), "Holy: buff bar shown")
 check(B("pal_seal").__attr.spell == S(20166) and B("pal_aura").__attr.spell == S(19746), "Holy defaults: Seal of Wisdom, Concentration Aura")
+-- /ch show, the option and the minimap button never show an empty bar
+Slash("show"); check(not ClassHelperFrame.__shown and MH.db.profile.shown, "Holy: /ch show keeps the empty bar hidden")
+o.args.general.args.shown.set({ "general", "shown" }, true); check(not ClassHelperFrame.__shown, "Holy: option keeps the empty bar hidden")
+FRAMES.ClassHelperMinimapButton.__scripts.OnClick(); FRAMES.ClassHelperMinimapButton.__scripts.OnClick()
+check(not ClassHelperFrame.__shown and MH.db.profile.shown, "Holy: minimap click keeps the empty bar hidden")
 -- fixed mode by slash command and options
 Slash("rota vergeltung"); check(M.activeRota == "ret" and ClassHelperFrame.__shown and MH.db.profile.palRotationMode == "ret", "/ch rota ret")
 o.args.paladin.args.palRotationMode.set({ "paladin", "palRotationMode" }, "prot"); check(M.activeRota == "prot", "mode via options")
@@ -1624,6 +1665,8 @@ check(o.args.paladin.args.palUsePallyPower.disabled() == false, "PallyPower opti
 check(macro("seal"):find("/cast " .. S(21084), 1, true), "seal from PallyPower (Righteousness): " .. macro("seal"))
 check(B("pal_seal").__attr.spell == S(21084) and B("pal_aura").__attr.spell == S(19746), "buff bar: PallyPower seal and aura (Concentration): " .. tostring(B("pal_seal").__attr.spell) .. " " .. tostring(B("pal_aura").__attr.spell) .. " shown=" .. tostring(FRAMES.ClassHelperBuffBar.__shown))
 check(B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "PallyPower rf=false: RF still wanted in Prot (owner's decision)")
+local tb = #OUT; FRAMES.ClassHelperBuff_pal_aura.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_aura)
+check(table.concat(OUT, "\n", tb + 1):find(GetLocale() == "deDE" and "aus PallyPower" or "from PallyPower", 1, true), "aura tooltip names PallyPower as the source")
 Slash("rota ret"); upd()
 check(B("pal_rf").__attr.macrotext == "/cancelaura " .. S(25780), "PallyPower rf=false in Ret: RF not wanted")
 PallyPower.opt.rf = true; upd(); check(B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "PallyPower rf=true in Ret: RF wanted")
@@ -1708,6 +1751,15 @@ check(reco() == "seal" and state("seal") == "urgent", "no seal: seal, urgent: " 
 check(info():find(DE and "Kein Siegel" or "No seal", 1, true), "no-seal note: " .. info())
 AURAS.player = { { S(21084), 0, 0, 21084 } }; upd()
 check(reco() == "seal" and state("seal") == "glow", "another seal: wanted seal, not urgent")
+-- an unknown seal (e.g. below level 64) falls back to Seal of Righteousness
+KNOWN[31801] = false; upd()
+check(M.PalSealId() == 21084 and macro("seal"):find("/cast " .. S(21084), 1, true), "Seal of Vengeance unknown: Righteousness: " .. macro("seal"))
+check(reco() ~= "seal", "Righteousness active and wanted: no seal recommendation: " .. tostring(reco()))
+KNOWN[20375] = false; Slash("aoe an"); upd()
+check(M.PalSealId() == 21084 and reco() ~= "sealaoe", "Seal of Command untalented: AoE mode wants Righteousness: " .. tostring(reco()))
+check(macro("sealaoe"):find("/cast " .. S(21084), 1, true), "AoE seal button casts Righteousness then: " .. macro("sealaoe"))
+Slash("aoe aus"); KNOWN[31801], KNOWN[20375] = nil, nil; upd()
+check(macro("seal"):find("/cast " .. S(31801), 1, true), "Vengeance known again: back")
 -- 2) out of combat with a target: no Avenging Wrath, Judgement opens
 auras(); upd()
 check(reco() == "judge", "out of combat: Judgement first, no AW: " .. tostring(reco()))
@@ -1721,10 +1773,17 @@ DEBUFFS.player = { { S(25771), 0, GetTime() + 110, 25771 } }; upd()
 check(reco() == "judge", "Forbearance < 30 s old blocks AW: " .. tostring(reco()))
 DEBUFFS.player = { { S(25771), 0, GetTime() + 60, 25771 } }; upd()
 check(reco() == "aw", "older Forbearance: AW allowed")
+DEBUFFS.player = {}; upd()
+DEBUFFS.player = { { S(25771), 0, 0, 25771 } }; upd()
+check(reco() == "judge", "Forbearance without expiry, just appeared: blocks AW: " .. tostring(reco()))
+SetNow(GetTime() + 31); upd(); check(reco() == "aw", "Forbearance without expiry, seen for 31 s: AW allowed: " .. tostring(reco()))
 DEBUFFS.player = { { "Avenging Wrath Marker", 0, GetTime() + 20, 61987 } }; upd()
 check(reco() == "judge", "AW marker (debuff) blocks AW")
 DEBUFFS.player = {}; auras({ "x", 0, GetTime() + 20, 61987 }); upd()
 check(reco() == "judge", "AW marker (buff) blocks AW")
+auras(); DEBUFFS.player = { { S(25771), 0, GetTime() + 110, 25771 } }; upd()
+check(reco() == "aw", "marker seen this session: Forbearance alone no longer blocks: " .. tostring(reco()))
+DEBUFFS.player = {}
 auras(); USABLE[S(AW)] = false; upd(); check(reco() == "judge", "AW not usable: skipped"); USABLE[S(AW)] = nil
 -- 3) order Judgement > CS > DS > Consecration > HoW > Exorcism (AoW) > Plea
 cds({ [AW] = 100 }); upd(); check(reco() == "judge", "AW on cooldown: Judgement")
@@ -1738,10 +1797,10 @@ check(info():find(S(59578), 1, true), "AoW note: " .. info())
 auras({ S(53489), 0, GetTime() + 10, 53489 }); upd(); check(reco() == "exo", "Art of War rank 1: Exorcism")
 auras(); cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6, [PLEA] = 50 }); upd()
 check(reco() == nil, "everything on cooldown: nothing")
--- Hammer of Wrath at 20 % and during Avenging Wrath (IsUsableSpell decides)
+-- Hammer of Wrath only at 20 % (3.3: Avenging Wrath does not enable it, that came in Cataclysm)
 TARGET_HP = 20; upd(); check(reco() == "how", "target at 20 %: Hammer of Wrath: " .. tostring(reco()))
-TARGET_HP = 50; auras({ S(AW), 0, GetTime() + 15, AW }); upd(); check(reco() == "how", "Avenging Wrath up: Hammer of Wrath")
-USABLE[S(HOW)] = false; upd(); check(reco() == nil, "HoW not usable (3.3.5 core: only below 20 %): skipped"); USABLE[S(HOW)] = nil
+USABLE[S(HOW)] = false; upd(); check(reco() == nil, "HoW not usable: skipped"); USABLE[S(HOW)] = nil
+TARGET_HP = 50; auras({ S(AW), 0, GetTime() + 15, AW }); upd(); check(reco() == nil, "Avenging Wrath up, 50 %: no Hammer of Wrath: " .. tostring(reco()))
 auras(); upd(); check(reco() == nil, "no AW, 50 %: no HoW")
 -- Consecration needs time to die >= 6 s
 cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [HOW] = 6, [PLEA] = 50 })
@@ -1765,7 +1824,9 @@ Tick(2); cds({ [AW] = 100 })
 -- 5) melee range
 RANGE.target = 0; cds({ [AW] = 100, [PLEA] = 50 }); upd()
 check(reco() == nil and info():find(DE and "Nahkampfreichweite" or "melee range", 1, true), "out of range: nothing, note: " .. info())
-RANGE.target = nil; upd(); check(reco() == "judge", "back in range")
+cds({ [AW] = 100, [PLEA] = 50, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6 }); upd()
+check(reco() == nil and not info():find(DE and "Nahkampfreichweite" or "melee range", 1, true), "out of range, melee abilities on cooldown anyway: no range note: " .. info())
+RANGE.target = nil; cds({ [AW] = 100, [PLEA] = 50 }); upd(); check(reco() == "judge", "back in range")
 -- 6) trinkets ride on the AW button
 INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")
 EQUIPPED[13] = "|Hitem:50343|h[x]|h"; EQUIPPED[14] = "|Hitem:50355|h[x]|h"; ITEM_USE[50343] = "Use"
@@ -1775,6 +1836,9 @@ INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd()
 check(reco() == "aw" and state("aw") == "urgent", "AW on cooldown but trinket ready: AW button: " .. tostring(reco()))
 check(info():find(DE and "Schmuckst" or "Trinket ready", 1, true), "trinket note: " .. info())
 SLOT_COOLDOWNS[13] = 60; upd(); check(reco() == "judge", "trinket on cooldown too: Judgement")
+ITEM_USE[50355] = "Use"; upd() -- slot 14 turns on-use in combat (swap): the macro can't follow until after combat
+check(reco() == "judge" and not macro("aw"):find("/use 14", 1, true), "trinket not in the AW macro: no AW glow for it: " .. tostring(reco()))
+ITEM_USE[50355] = nil
 -- 7) AoE mode: DS > Consecration > Holy Wrath (undead/demon) > CS > HoW > Judgement > Exorcism
 Slash("aoe an"); cds({ [AW] = 100 }); upd()
 check(reco() == "sealaoe" and state("sealaoe") == "glow", "AoE mode with Seal of Vengeance: Seal of Command, not urgent: " .. tostring(reco()))
@@ -1785,7 +1849,12 @@ TARGET_TYPE = { "Untoter", "Undead" }; upd(); check(reco() == "hwrath", "AoE vs 
 TARGET_TYPE = { "D\195\164mon", "Demon" }; upd(); check(reco() == "hwrath", "AoE vs demon: Holy Wrath")
 TARGET_TYPE = { "Wildtier", "Beast" }; upd(); check(reco() == "cs", "AoE vs beast: no Holy Wrath")
 TARGET_TYPE = { "Untoter", "Undead" }; Slash("aoe aus"); auras(); cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6 }); upd()
-check(reco() == "plea", "single target vs undead: no Holy Wrath: " .. tostring(reco()))
+check(reco() == "hwrath", "single target vs undead: Holy Wrath before Divine Plea: " .. tostring(reco()))
+auras({ S(59578), 0, GetTime() + 10, 59578 }); upd(); check(reco() == "exo", "single target: Exorcism (AoW) before Holy Wrath: " .. tostring(reco()))
+auras(); cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6, [HW] = 20 }); upd()
+check(reco() == "plea", "Holy Wrath on cooldown: Divine Plea: " .. tostring(reco()))
+TARGET_TYPE = { "Humanoid", "Humanoid" }; cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6 }); upd()
+check(reco() == "plea", "single target vs humanoid: no Holy Wrath: " .. tostring(reco()))
 TARGET_TYPE = nil
 cds({ [AW] = 100, [DS] = 6, [CONS] = 6, [CS] = 3 }); Slash("aoe an"); AURAS.player = { { S(20375), 0, 0, 20375 } }; upd()
 check(reco() == "judge", "AoE: Judgement after CS and HoW: " .. tostring(reco()))
@@ -1812,6 +1881,14 @@ check(o.args.paladin.hidden() == true, "paladin options hidden")
 check(FRAMES.ClassHelperBuffBar.__shown and buffShown("flask") and buffShown("food"), "buff bar with flask and food")
 check(FRAMES.ClassHelperBuff_pal_seal == nil and FRAMES.ClassHelperButton_seal == nil, "no paladin frames")
 for _, cmd in ipairs({ "help", "", "rota", "report", "debug on", "debug off", "flask", "analyse start", "analyse stop", "show", "hide", "config" }) do Slash(cmd) end
+Slash("show"); check(not ClassHelperFrame.__shown, "warrior: /ch show keeps the empty bar hidden")
+-- old MageHelper folder still installed: warning in chat (any class)
+ADDONS_INSTALLED.MageHelper = { enabled = true }
+local before = #OUT
+check(M.WarnOldMageHelper() and #OUT == before + 1 and OUT[#OUT]:find("MageHelper", 1, true) and OUT[#OUT]:find("README", 1, true), "old MageHelper enabled: warning: " .. tostring(OUT[#OUT]))
+ADDONS_INSTALLED.MageHelper = { enabled = false, loaded = true }; check(M.WarnOldMageHelper(), "old MageHelper loaded: warning")
+ADDONS_INSTALLED.MageHelper = { enabled = false }; check(not M.WarnOldMageHelper(), "old MageHelper disabled: no warning")
+ADDONS_INSTALLED.MageHelper = nil; check(not M.WarnOldMageHelper(), "no MageHelper: no warning")
 INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd(10); INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
 check(#ERRORS == 0, "no Lua errors")
 OUT[#OUT + 1] = "OTHERCLASS OK"
@@ -1825,7 +1902,7 @@ TANKY = { name = "Tanky", class = "WARRIOR" }
 function protBase()
   INCOMBAT = true
   AURAS.player = { { S(25780), 0, 0, 25780 }, { S(31801), 0, 0, 31801 }, { S(48952), 8, GetTime() + 9, 48952 }, { S(54428), 0, GetTime() + 15, 54428 } }
-  DEBUFFS.player = {}
+  DEBUFFS, THREAT = { player = {} }, {}
   COOLDOWNS, RANGE, USABLE, BOSSES = {}, {}, {}, {}
   COOLDOWN_DURATION, SPELL_RANGE = {}, {}
   for id, d in pairs({ [53408] = 8, [20271] = 8, [53595] = 6, [48819] = 8, [61411] = 6, [48952] = 8, [48827] = 30, [62124] = 8,
@@ -1906,22 +1983,35 @@ OUT[#OUT + 1] = "PROT OK"
 TAUNT = r'''
 protBase(); FireEvent("PLAYER_REGEN_DISABLED")
 INSTANCE = { type = "raid", difficulty = 2, dynamic = 0 }
-boss(36626, "Fauldarm", TANKY)
-for i = 1, 5 do cl(i == 1 and "SPELL_AURA_APPLIED" or "SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, i > 1 and i or nil) end
-check(M.PalStacks("GUID-Tanky", "fester") == 5, "Gastric Bloat stacks tracked: " .. M.PalStacks("GUID-Tanky", "fester"))
+local GB, MP = 72553, 72451
+-- swap-debuff stacks on a unit (read by UnitDebuff, not from the combat log)
+local function stacks(unit, id, n, exp) DEBUFFS[unit] = n > 0 and { { S(id), n, exp or (GetTime() + 90), id } } or {} end
+boss(36626, "Fauldarm", TANKY); upd(4)
+stacks("targettarget", GB, 5)
+check(M.PalUnitStacks("targettarget", M.PAL_RULE_BY_NPC[36626]) == 5, "Gastric Bloat stacks read from the other tank's auras")
 local k, n = reco(); check(k ~= "hor" and k ~= "rd", "5 stacks: no taunt yet: " .. tostring(k))
-cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, 6)
+stacks("targettarget", GB, 6)
 k, n = reco(); check(k == "hor" and st("hor") == "urgent", "6 stacks on the other tank: Hand of Reckoning urgent: " .. tostring(k) .. " " .. tostring(st("hor")))
 check(n:find("Tanky", 1, true) and n:find("6", 1, true), "note names the tank and stacks: " .. tostring(n))
--- my own stacks still up: no taunt
-DEBUFFS.player = { { S(72553), 3, GetTime() + 60, 72553 } }
-k = reco(); check(k ~= "hor" and k ~= "rd", "own Gastric Bloat still up: no taunt: " .. tostring(k))
-DEBUFFS.player = { { S(72553), 3, GetTime() + 1, 72553 } }
-k = reco(); check(k == "hor", "own stacks about to fall off: taunt: " .. tostring(k))
+check(n:find(" | ", 1, true) and n:find(S(53408), 1, true), "taunt note carries the rotation note: " .. tostring(n))
+-- the auras decide: a stale/odd combat log event changes nothing, no event at all is fine too
+cl("SPELL_AURA_REMOVED", "GUID-Tanky", "Tanky", GB); k = reco(); check(k == "hor", "combat log REMOVED without the aura gone: still taunt")
+-- my own stacks still up: no taunt (a new stack on top would add up towards 10 = explosion)
+DEBUFFS.player = { { S(GB), 3, GetTime() + 60, GB } }
+k, n = reco(); check(k ~= "hor" and k ~= "rd", "own Gastric Bloat still up: no taunt: " .. tostring(k))
+DEBUFFS.player = { { S(GB), 3, GetTime() + 1, GB } }
+k, n = reco(); check(k == "hor" and st("hor") == "prep", "own stacks about to fall off: blue only, not red: " .. tostring(k) .. " " .. tostring(st("hor")))
+check(n:find("3", 1, true), "note shows my own stacks: " .. tostring(n))
 DEBUFFS.player = {}
+k = reco(); check(k == "hor" and st("hor") == "urgent", "own stacks gone: red: " .. tostring(st("hor")))
+-- I tank the boss (threat API): never taunt
+THREAT.target = { true, 3, 100, 100 }; k = reco(); check(k ~= "hor" and k ~= "rd", "tanking by threat: no taunt: " .. tostring(k))
+THREAT.target = nil
 -- I am the boss's target: never taunt
 TARGETTARGET = ME; k = reco(); check(k ~= "hor" and k ~= "rd", "boss targets me: no taunt: " .. tostring(k))
-TARGETTARGET = TANKY
+-- the boss's target just changed (a target flip during a cast): no taunt until it is stable 0.5 s
+TARGETTARGET = TANKY; k = reco(); check(k ~= "hor" and k ~= "rd", "boss target changed 0.3 s ago: no taunt yet: " .. tostring(k))
+reco(); k = reco(); check(k == "hor", "boss target stable: taunt: " .. tostring(k))
 -- Hand of Reckoning on cooldown: Righteous Defense on the boss's target
 COOLDOWNS[S(62124)] = 5; k, n = reco(); check(k == "rd" and st("rd") == "urgent", "HoR on cooldown: Righteous Defense: " .. tostring(k))
 check(n:find(S(62124), 1, true), "RD note says HoR is not ready: " .. tostring(n))
@@ -1933,39 +2023,36 @@ FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", S(62124)); k = reco(); check(k ~
 for p in pairs(M.lastCastAt) do M.lastCastAt[p] = nil end
 -- the boss isn't my target (boss1 only): no taunt button (the macros act on my target), hint in the note
 TARGETGUID, TARGETNAME, TARGETTARGET = npcGuid(37000), "Gasspore", nil
-BOSSES.boss1 = { name = "Fauldarm", guid = npcGuid(36626), target = TANKY }
+BOSSES.boss1 = { name = "Fauldarm", guid = npcGuid(36626), target = TANKY }; DEBUFFS.boss1target = DEBUFFS.targettarget
 k, n = reco(); check(k ~= "hor" and k ~= "rd", "boss not targeted: no taunt button: " .. tostring(k))
-check(n and n:find(GetLocale() == "deDE" and "Boss ins Ziel" or "target the boss", 1, true), "hint to target the boss: " .. tostring(n))
+check(n and n:find(GetLocale() == "deDE" and "Boss ins Ziel" or "target the boss", 1, true) and n:find("Tanky", 1, true), "hint to target the boss, with the reason: " .. tostring(n))
 BOSSES = {}; boss(36626, "Fauldarm", TANKY)
 -- option: threshold 7
 MH.db.profile.palT_festerN = 7; k = reco(); check(k ~= "hor", "threshold 7: 6 stacks no taunt: " .. tostring(k))
 MH.db.profile.palT_festerN = 6; MH.db.profile.palT_fester = false; k = reco(); check(k ~= "hor", "rule off: no taunt")
 MH.db.profile.palT_fester = true; MH.db.profile.palTaunt = false; k = reco(); check(k ~= "hor", "taunt off: no taunt")
 MH.db.profile.palTaunt = true
--- aura removed: stacks gone
-cl("SPELL_AURA_REMOVED", "GUID-Tanky", "Tanky", 72553)
-check(M.PalStacks("GUID-Tanky", "fester") == 0, "REMOVED clears the stacks")
-cl("SPELL_AURA_APPLIED", "GUID-Tanky", "Tanky", 72553); cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, 7)
-cl("SPELL_AURA_REMOVED_DOSE", "GUID-Tanky", "Tanky", 72553, 6)
-check(M.PalStacks("GUID-Tanky", "fester") == 6, "REMOVED_DOSE takes the amount")
--- combat end resets the rules
+-- the other tank's stacks gone (aura removed): no taunt
+stacks("targettarget", GB, 0); k = reco(); check(k ~= "hor", "other tank's aura gone: no taunt: " .. tostring(k))
 endCombat()
-check(M.PalStacks("GUID-Tanky", "fester") == 0, "combat end: stacks reset")
 -- Saurfang: Rune of Blood on the other tank -> taunt at once
 protBase(); FireEvent("PLAYER_REGEN_DISABLED")
-boss(37813, "Todesbringer Saurfang", TANKY)
+boss(37813, "Todesbringer Saurfang", TANKY); upd(4)
 k = reco(); check(k ~= "hor", "Saurfang without rune: no taunt: " .. tostring(k))
+-- a swing whose damage equals the rune's spell ID is no rune (only SPELL_* events carry spell IDs)
+FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SWING_DAMAGE", TARGETGUID, "Boss", 0xa48, "GUID-Tanky", "Tanky", 0x514, 72410, 0, 1)
+k = reco(); check(k ~= "hor", "SWING_DAMAGE of 72410: no rune: " .. tostring(k))
 cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 72410)
 k, n = reco(); check(k == "hor" and st("hor") == "urgent", "SAURFANG: Rune of Blood on the other tank: taunt: " .. tostring(k))
 TARGETTARGET = ME; k = reco(); check(k ~= "hor", "SAURFANG: boss on me: no taunt")
-TARGETTARGET = TANKY; SetNow(GetTime() + 21); k = reco(); check(k ~= "hor", "SAURFANG: rune too old: no taunt: " .. tostring(k))
--- boss change resets: Festergut stacks don't carry over
-cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, 8)
+TARGETTARGET = TANKY; upd(4); SetNow(GetTime() + 21); k = reco(); check(k ~= "hor", "SAURFANG: rune too old: no taunt: " .. tostring(k))
+-- boss change resets: Saurfang's marks don't carry over
+cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 72410)
 boss(34796, "Gormok der Pfähler", TANKY); reco()
-check(M.PalStacks("GUID-Tanky", "fester") == 0, "boss change: other rules reset")
+check(not (M.palProt.marks["GUID-Tanky"] or {}).saurfang, "boss change: other rules reset")
 -- Gormok: 3 stacks normal, 2 heroic (also ICC-style dynamic heroic flag)
 INSTANCE = { type = "raid", difficulty = 2, dynamic = 0, isDynamic = false }
-cl("SPELL_AURA_APPLIED", "GUID-Tanky", "Tanky", 66331); cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 66331, 2)
+stacks("targettarget", 66331, 2)
 k = reco(); check(k ~= "hor", "Gormok normal: 2 stacks no taunt: " .. tostring(k))
 INSTANCE.difficulty = 4; check(M.PalHeroic(), "difficulty 4 = heroic")
 k = reco(); check(k == "hor", "Gormok heroic: 2 stacks taunt: " .. tostring(k))
@@ -1978,16 +2065,28 @@ k = reco(); check(k ~= "hor", "Soul Reaper rule off by default: " .. tostring(k)
 MH.db.profile.palT_lk = true; k = reco(); check(k ~= "hor", "Soul Reaper rule: not on normal")
 INSTANCE.dynamic = 1; k = reco(); check(k == "hor", "Soul Reaper rule on, heroic: taunt: " .. tostring(k))
 MH.db.profile.palT_lk = false
+-- Putricide's Mutated Plague: never left to fall off, the tanks alternate A2/B2/A3/B3 ("leapfrog")
+boss(36678, "Professor Seuchenmord", TANKY); DEBUFFS.player = {}
+stacks("targettarget", MP, 1); k = reco(); check(k ~= "hor", "PUTRI: 1 stack: no taunt: " .. tostring(k))
+stacks("targettarget", MP, 2); k = reco(); check(k == "hor", "PUTRI: other 2, mine 0: taunt: " .. tostring(k))
+DEBUFFS.player = { { S(MP), 2, GetTime() + 40, MP } }; stacks("targettarget", MP, 2, GetTime() + 50)
+k = reco(); check(k == "hor" and st("hor") == "urgent", "PUTRI: 2 vs 2, theirs newer: taunt although mine are up: " .. tostring(k))
+stacks("targettarget", MP, 2, GetTime() + 30); k = reco(); check(k ~= "hor", "PUTRI: 2 vs 2, mine newer (just taunted): no taunt back: " .. tostring(k))
+stacks("targettarget", MP, 3, GetTime() + 55); k = reco(); check(k == "hor", "PUTRI: they 3, me 2: taunt: " .. tostring(k))
+DEBUFFS.player = { { S(MP), 4, GetTime() + 40, MP } }; k = reco(); check(k ~= "hor", "PUTRI: I have more: no taunt: " .. tostring(k))
+DEBUFFS.player = {}
 endCombat()
 -- options: groups shown for paladins, valid, all texts translated
 local o = opts()
+local function txt(v) if type(v) == "function" then return v() end return v end
 check(o.args.paladinProtTaunt.hidden() == false and o.args.paladinProtDef.hidden() == false, "Prot option groups shown")
+check(MH.db.profile.palD_stomp == false, "Gormok Stomp defensive off by default")
 for _, g in ipairs({ "paladinProtTaunt", "paladinProtDef" }) do
-  OUT[#OUT + 1] = "PROTOPT " .. o.args[g].name
+  OUT[#OUT + 1] = "PROTOPT " .. txt(o.args[g].name)
   for key, a in pairs(o.args[g].args) do
-    local nm = type(a.name) == "function" and a.name() or a.name
+    local nm = txt(a.name)
     check(type(nm) == "string" and nm ~= "", "option name: " .. key)
-    OUT[#OUT + 1] = "PROTOPT " .. nm .. " | " .. tostring(a.desc or "")
+    OUT[#OUT + 1] = "PROTOPT " .. nm .. " | " .. tostring(txt(a.desc) or "")
     if a.disabled then a.disabled() end
   end
 end
@@ -2014,11 +2113,18 @@ check(k ~= "dprot", "Soul Reaper toggle off"); MH.db.profile.palD_reaper = true
 SetNow(GetTime() + 7); cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 69409); k = reco(); check(k ~= "dprot", "Soul Reaper on the other tank: no DP for me")
 endCombat()
 -- Saurfang Frenzy while he attacks me
-protBase(); boss(37813, "Todesbringer Saurfang", ME)
+protBase(); boss(37813, "Todesbringer Saurfang", ME); THREAT.target = { true, 3, 100, 100 }
 cl("SPELL_AURA_APPLIED", TARGETGUID, "Saurfang", 72737)
-k = reco(); check(k == "dprot", "Saurfang Frenzy, boss on me: DP: " .. tostring(k))
-TARGETTARGET = TANKY; k = reco(); check(k ~= "dprot", "Frenzy while the other tank tanks: no DP: " .. tostring(k))
+k = reco(); check(k == "dprot", "Saurfang Frenzy, I tank him (threat): DP: " .. tostring(k))
+TARGETTARGET = TANKY; THREAT.target = nil; k = reco(); check(k ~= "dprot", "Frenzy while the other tank tanks: no DP: " .. tostring(k))
+TARGETTARGET = ME; k = reco(); check(k ~= "dprot", "Frenzy, boss targets me but the threat API says not tanking (cast flip): no DP: " .. tostring(k))
+TARGETNAME, TARGETGUID, THREAT.target = "Training Dummy", nil, { true, 3, 100, 100 }
+k = reco(); check(k ~= "dprot", "Frenzy without the boss found: no DP: " .. tostring(k))
 endCombat()
+-- Ardent Defender's lockout is a debuff: shown in the health note
+protBase(); PLAYER_HP = 30; DEBUFFS.player = { { S(66233), 0, GetTime() + 100, 66233 } }
+k, n = reco(); check(k == "dprot" and n:find(S(66233), 1, true), "Ardent Defender (debuff) named in the note: " .. tostring(n))
+PLAYER_HP = nil; endCombat()
 -- Festergut: Pungent Blight cast, and expected after the 3rd inhale
 protBase(); boss(36626, "Fauldarm", ME)
 cl("SPELL_CAST_START", nil, nil, 69195)
@@ -2030,7 +2136,10 @@ SetNow(GetTime() + 32); k = reco(); check(k == "dprot", "about 33 s after the 3r
 endCombat()
 -- Gormok Staggering Stomp, Sindragosa buffet stacks on me
 protBase(); boss(34796, "Gormok der Pfähler", ME)
-cl("SPELL_CAST_START", nil, nil, 66330); k = reco(); check(k == "dprot", "Gormok Stomp: DP: " .. tostring(k))
+cl("SPELL_CAST_START", nil, nil, 66330); k = reco(); check(k ~= "dprot", "Gormok Stomp: off by default: " .. tostring(k))
+MH.db.profile.palD_stomp = true
+cl("SPELL_CAST_START", nil, nil, 66330); k = reco(); check(k == "dprot", "Gormok Stomp switched on: DP: " .. tostring(k))
+MH.db.profile.palD_stomp = false
 endCombat()
 protBase(); boss(36853, "Sindragosa", ME)
 DEBUFFS.player = { { S(70127), 4, GetTime() + 8, 70127 } }; k = reco(); check(k ~= "dprot", "buffet 4 on me: no DP")

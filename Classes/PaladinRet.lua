@@ -10,18 +10,31 @@
 -- Righteous Fury active while not wanted is already shown by Paladin.lua (buff bar entry red, info
 -- line warning; PallyPower's rf = true makes it wanted).
 --
+-- Source of the order: SimulationCraft's default paladin action list at commit 85243e9
+-- (engine/sc_paladin.cpp, paladin_t::init_actions), with Ret talents and a two-hander:
+--   seal_of_vengeance / use_item (trinkets) / avenging_wrath / judgement / crusader_strike /
+--   divine_storm / consecration,if=target.time_to_die>=6 / hammer_of_wrath / exorcism,if=
+--   buff.the_art_of_war.react / divine_plea
+-- (hammer_of_justice, a stun, is left out: it does nothing on bosses; shield_of_righteousness and
+-- holy_shock are not in a 2H Ret list). SimC's hammer_of_wrath_t::ready() only checks target
+-- health <= 20 %: in 3.3 Avenging Wrath does not enable Hammer of Wrath (that came in Cataclysm).
+--
 -- Priority model:
 -- 1) No seal -> the wanted seal (urgent); another seal than the wanted one (PallyPower changed, AoE
 --    mode switched in combat) -> the wanted seal, not urgent. "sealaoe" in AoE mode, else "seal".
--- 2) Avenging Wrath (in combat with a target) when ready, or an on-use trinket is ready: the AW
---    button's macro also uses both trinket slots (like the Frost cooldown button), all off the GCD.
+--    An unknown seal falls back to Seal of Righteousness (M.PalSealIndex).
+-- 2) Avenging Wrath (in combat with a target) when ready, or an on-use trinket of the AW macro is
+--    ready: the AW button's macro also uses the on-use trinkets (like the Frost cooldown button),
+--    all off the GCD; the trinket recommendation checks exactly the slots the macro holds.
 --    Since patch 3.0.4 Avenging Wrath no longer causes Forbearance; it is blocked for 30 s by the
 --    hidden "Avenging Wrath Marker" (61987) that Divine Shield / Divine Protection / Hand of
---    Protection / Lay on Hands on oneself apply. Checked by ID (buff or debuff); since the marker is
---    hidden on some cores, a Forbearance younger than 30 s (more than 90 of its 120 s left) blocks too.
+--    Protection / Lay on Hands on oneself apply. Checked by ID (buff or debuff). Only while the
+--    marker has never been seen this session (cores that hide it), a Forbearance younger than 30 s
+--    blocks too: more than 90 of its 120 s left, or, without an expiry, seen for less than 30 s.
 -- 3) Single target: Judgement > Crusader Strike > Divine Storm > Consecration (target time-to-die
---    >= 6 s or unknown) > Hammer of Wrath (target <= 20 % or Avenging Wrath up, and IsUsableSpell)
---    > Exorcism (only with The Art of War) > Divine Plea (in combat, not active).
+--    >= 6 s or unknown) > Hammer of Wrath (target <= 20 %, and IsUsableSpell) > Exorcism (only with
+--    The Art of War) > Holy Wrath (target undead or demon; not in SimC, owner's addition) > Divine
+--    Plea (in combat, not active).
 --    AoE mode: Divine Storm > Consecration > Holy Wrath (target undead or demon) > Crusader Strike
 --    > Hammer of Wrath > Judgement > Exorcism (Art of War) > Divine Plea.
 -- Cooldowns are the real ones: a cooldown no longer than the GCD counts as ready (as M.KnownReady
@@ -31,14 +44,16 @@
 -- (the button shows the blue "not yet" state until it is clickable) instead of flickering to a
 -- lower one. Out of melee range (Crusader Strike's range check) the melee abilities (CS, DS,
 -- Consecration, Holy Wrath) are skipped; Judgement, Hammer of Wrath and Exorcism use their own range.
+-- "Not in melee range" is only shown when a skipped melee ability would otherwise have been ready.
 local M = select(2, ...).M
 if not M then return end
-local L, E = M.L, M.L_EN
+local L, E, LF = M.L, M.L_EN, M.LF
 local ID = M.PAL_ID
 
 M.PAL_RET = {
     AW_MARKER = 61987,         -- Avenging Wrath Marker (hidden, 30 s): blocks Avenging Wrath
     FORBEARANCE_FRESH = 90,    -- Forbearance (120 s) with more left than this = applied < 30 s ago
+    FORBEARANCE_AGE = 30,      -- ... or, without an expiry, seen for less than this
     CONS_TTD = 6,              -- Consecration only when the target lives at least this long
     HOW_PCT = 20,              -- Hammer of Wrath execute range
     AOW_IDS = { 59578, 53489 },-- The Art of War, rank 2 and 1
@@ -46,8 +61,6 @@ M.PAL_RET = {
     HW_TYPES = { ["Undead"] = true, ["Untoter"] = true, ["Demon"] = true, ["D\195\164mon"] = true },
 }
 local R = M.PAL_RET
-R.MARKER_IDS = { [R.AW_MARKER] = true }
-R.AW_IDS = { [M.PAL_ID.aw] = true } -- the AW buff by ID only: the hidden marker may carry the same name
 
 M.DEFAULTS.profile.palRetWait = 0.4 -- seconds a higher-priority ability may still be on cooldown
 
@@ -56,7 +69,6 @@ M.DEFAULTS.profile.palRetWait = 0.4 -- seconds a higher-priority ability may sti
 E["Kein Siegel: %s"] = "No seal: %s"
 E["Anderes Siegel aktiv: %s"] = "Another seal active: %s"
 E["%s: Ziel unter 20%%"] = "%s: target below 20%%"
-E["%s während %s"] = "%s during %s"
 E["%s: Untote/Dämonen"] = "%s: undead/demons"
 E["Nicht in Nahkampfreichweite"] = "Not in melee range"
 E["Vergeltung: Wartetoleranz (s)"] = "Retribution: wait tolerance (s)"
@@ -68,19 +80,38 @@ local function Name(id) return GetSpellInfo(id) end
 -- -----------------------------------------------------------------------------------------------
 -- Avenging Wrath button: Avenging Wrath + on-use trinkets in one click (all off the GCD)
 -- -----------------------------------------------------------------------------------------------
+-- The slots the current macro uses (rebuilt out of combat only): the trinket recommendation reads
+-- this list, so a glow never asks for a click whose macro doesn't use that trinket (e.g. a trinket
+-- swapped in combat).
+M.palAwSlots = {}
 function M.PalAwMacro()
     local n = Name(ID.aw) or tostring(ID.aw)
     local t = { "#showtooltip " .. n, "/cast " .. n }
+    local slots = {}
     for _, slot in ipairs(M.TRINKET_SLOTS) do
-        if M.OnUseTrinket(slot) then t[#t + 1] = "/use " .. slot end
+        if M.OnUseTrinket(slot) then t[#t + 1] = "/use " .. slot; slots[#slots + 1] = slot end
     end
+    M.palAwSlots = slots
     return table.concat(t, "\n")
 end
 
--- The button is clickable as soon as Avenging Wrath or a trinket is.
+-- Trinkets of the AW macro: ready, shortest remaining cooldown (999 = none in the macro).
+function M.PalAwTrinkets()
+    local ready, best = false, 999
+    for _, slot in ipairs(M.palAwSlots) do
+        if M.OnUseTrinket(slot) then -- still the same kind of item in that slot
+            local r, remain = M.ItemSlotReady(slot)
+            ready = ready or r
+            best = math.min(best, r and 0 or remain)
+        end
+    end
+    return ready, best
+end
+
+-- The button is clickable as soon as Avenging Wrath or a trinket of its macro is.
 function M.PalAwRemaining()
     local r = M.SpellCooldownRemaining(Name(ID.aw))
-    local _, trinket = M.TrinketCooldown()
+    local _, trinket = M.PalAwTrinkets()
     return math.min(r, trinket)
 end
 
@@ -128,11 +159,15 @@ local function InRange(id)
     return not (n and IsSpellInRange and IsSpellInRange(n, "target") == 0)
 end
 
--- Avenging Wrath blocked by its marker (buff or debuff, by ID) or a fresh Forbearance.
+-- Avenging Wrath blocked by its marker (buff or debuff, by ID) or, only while the marker has never
+-- been seen this session, a fresh Forbearance.
 function M.PalAwBlocked()
-    if M.HasBuff("player", {}, R.MARKER_IDS) or M.PlayerDebuffFull(nil, R.MARKER_IDS) then return true end
-    local fb, remain = M.PalForbearance()
-    return fb and remain > R.FORBEARANCE_FRESH or false
+    if M.PalBuffById(R.AW_MARKER) or M.PalDebuffById(R.AW_MARKER) then M.palAwMarkerSeen = true; return true end
+    if M.palAwMarkerSeen then return false end
+    local fb, remain, since = M.PalForbearance()
+    if not fb then return false end
+    if remain >= 999 then return GetTime() - (since or GetTime()) < R.FORBEARANCE_AGE end -- no expiry: own age
+    return remain > R.FORBEARANCE_FRESH
 end
 
 -- Time to die of the target itself (its own health samples, not the boss unit the Mage's Arcane
@@ -159,7 +194,6 @@ local ENTRIES = {
     cons = { "cons", ID.cons, true, function(S) return S.ttd == nil or S.ttd >= R.CONS_TTD end },
     how = { "how", ID.how, false, function(S)
         if S.targetHpPct <= R.HOW_PCT then return true, string.format(L("%s: Ziel unter 20%%"), Name(ID.how) or "?") end
-        if S.awUp then return true, string.format(L("%s während %s"), Name(ID.how) or "?", Name(ID.aw) or "?") end
         return false
     end },
     exo = { "exo", ID.exo, false, function(S)
@@ -173,7 +207,7 @@ local ENTRIES = {
     plea = { "plea", ID.plea, false, function(S) return S.inCombat and not S.pleaUp end, true },
 }
 M.PAL_RET_ORDER = {
-    single = { "judge", "cs", "dstorm", "cons", "how", "exo", "plea" },
+    single = { "judge", "cs", "dstorm", "cons", "how", "exo", "hwrath", "plea" },
     aoe = { "dstorm", "cons", "hwrath", "cs", "how", "judge", "exo", "plea" },
 }
 
@@ -189,7 +223,7 @@ function M.PalRetReco(S)
     if not S.targetOK then return nil end
 
     -- state for the conditions
-    S.awUp = M.HasBuff("player", {}, R.AW_IDS) and true or false
+    S.awUp = M.PalBuffById(ID.aw) and true or false -- by ID only: the hidden marker may carry the same name
     S.pleaUp = M.PalHasAura(ID.plea) and true or false
     local aow, _, aowName = M.PalHasAura(R.AOW_IDS)
     S.aow, S.aowName = aow and true or false, aowName
@@ -199,12 +233,11 @@ function M.PalRetReco(S)
     S.inMelee = InRange(ID.cs)
     S.wait = math.max(0, math.min(tonumber(M.cfg.palRetWait) or 0.4, 1))
 
-    -- 2) Avenging Wrath + trinkets
+    -- 2) Avenging Wrath + trinkets (only the ones its macro uses)
     if S.inCombat then
         local awReady = M.PalRetRemain(ID.aw, now) <= 0 and Usable(ID.aw) and not M.PalAwBlocked() and not S.awUp
-        local trinketReady = M.TrinketCooldown()
         if awReady then return "aw", true, string.format(L("%s bereit"), Name(ID.aw) or "?") end
-        if trinketReady then return "aw", true, L("Schmuckstück bereit") end
+        if M.PalAwTrinkets() then return "aw", true, L("Schmuckstück bereit") end
     end
 
     -- 3) rotation: first ability ready within the wait tolerance
@@ -215,9 +248,10 @@ function M.PalRetReco(S)
         local ok, note = e[4](S)
         if ok and M.KnowsSpell(id) and Usable(id) then
             local inRange = e[5] or (e[3] and S.inMelee) or (not e[3] and InRange(id))
+            local ready = M.PalRetRemain(id, now) <= S.wait
             if not inRange then
-                skippedRange = true
-            elseif M.PalRetRemain(id, now) <= S.wait then
+                skippedRange = skippedRange or ready -- only worth a note when it would be next
+            elseif ready then
                 return e[1], false, note or Name(id)
             end
         end
@@ -229,10 +263,10 @@ end
 -- -----------------------------------------------------------------------------------------------
 -- Options
 -- -----------------------------------------------------------------------------------------------
-M.CLASS_OPTIONS.palret = { type = "group", name = L("Vergeltung"), order = 3, hidden = function() return M.CLASS ~= "PALADIN" end,
+M.CLASS_OPTIONS.palret = { type = "group", name = LF("Vergeltung"), order = 3, hidden = function() return M.CLASS ~= "PALADIN" end,
     get = function(info) return M.cfg[info[#info]] end, set = function(info, v) M.cfg[info[#info]] = v end, args = {
-    palRetWait = { type = "range", name = L("Vergeltung: Wartetoleranz (s)"), order = 1, min = 0, max = 1, step = 0.05, width = "full",
-        desc = L("Ist eine höher priorisierte Fähigkeit innerhalb dieser Zeit bereit, bleibt sie die Empfehlung statt einer niedrigeren (gegen Flackern). 0 = nur was jetzt bereit ist.") },
+    palRetWait = { type = "range", name = LF("Vergeltung: Wartetoleranz (s)"), order = 1, min = 0, max = 1, step = 0.05, width = "full",
+        desc = LF("Ist eine höher priorisierte Fähigkeit innerhalb dieser Zeit bereit, bleibt sie die Empfehlung statt einer niedrigeren (gegen Flackern). 0 = nur was jetzt bereit ist.") },
     trinkets = { type = "description", order = 2, fontSize = "medium",
         name = function() return string.format(L("Die Taste %s nutzt auch beide Schmuckstück-Plätze (13/14), wenn sie einen Benutzen-Effekt haben."), Name(ID.aw) or "?") end },
 } }

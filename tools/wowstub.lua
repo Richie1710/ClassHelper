@@ -67,6 +67,7 @@ local SPELLS = {
   [61987]={"Zornige Vergeltung","Avenging Wrath Marker"}, -- hidden marker (German name unknown)
   [53758]={"Fl\195\164schchen des Steinbluts","Flask of Stoneblood"}, [53760]={"Fl\195\164schchen des endlosen Zorns","Flask of Endless Rage"},
   [66233]={"Unerm\195\188dlicher Verteidiger","Ardent Defender"},
+  [72586]={"Segen der vergessenen K\195\182nige","Blessing of Forgotten Kings"},
   -- boss mechanics for the Protection taunt/defensive rules (one rank each is enough for names)
   [71204]={"Ber\195\188hrung der Bedeutungslosigkeit","Touch of Insignificance"}, [72410]={"Blutrune","Rune of Blood"},
   [72219]={"Magenbl\195\164hung","Gastric Bloat"}, [72553]={"Magenbl\195\164hung","Gastric Bloat"},
@@ -327,6 +328,14 @@ end
 -- shapeshift form (death knight presence, druid form): PLAYER_FORM = spell ID of the active form
 function GetShapeshiftForm() return PLAYER_FORM and 1 or 0 end
 function GetShapeshiftFormInfo(i) if i == 1 and PLAYER_FORM then return "icon", GetSpellInfo(PLAYER_FORM), true, true end end
+function GetNumShapeshiftForms() return PLAYER_FORM and 1 or 0 end
+-- other installed addons: ADDONS_INSTALLED[name] = { enabled = true/false, loaded = true/false }
+ADDONS_INSTALLED = {}
+function GetAddOnInfo(name)
+  local a = ADDONS_INSTALLED[name]
+  if a then return name, name, "", a.enabled and 1 or nil, 1, nil, "INSECURE" end
+end
+function IsAddOnLoaded(name) local a = ADDONS_INSTALLED[name]; return a and a.loaded and 1 or nil end
 -- ITEM_CHARGES[id] = charges reported with includeCharges (3rd argument), e.g. the Mana Sapphire's 3
 ITEM_CHARGES = {}
 function GetItemCount(id, includeBank, includeCharges)

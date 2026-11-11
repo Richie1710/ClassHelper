@@ -10,6 +10,10 @@
 local M = select(2, ...).M
 if not M then return end
 local L, E = M.L, M.L_EN
+-- Option names/descriptions are functions: built at file load (before the language setting is read),
+-- they follow /ch lang at display time (AceConfig r960 accepts functions for name and desc).
+function M.LF(s) return function() return L(s) end end
+local LF = M.LF
 
 local P = { ICON_SPELL = 20375, BUFF_ICON_SPELL = 20217 } -- minimap icons: Seal of Command, Blessing of Kings
 M.CLASS_MODULES.PALADIN = P
@@ -51,11 +55,13 @@ M.PAL_SEAL_INDEX = { justice = 1, light = 2, wisdom = 3, righteousness = 4, mart
 -- Auras in PallyPower's order (PallyPower.Auras, rank 1 IDs; matched by name, so every rank counts).
 M.PAL_AURAS = { 465, 7294, 19746, 19876, 19888, 19891, 32223 }
 -- Blessings in PallyPower's order: 1 Wisdom, 2 Might, 3 Kings, 4 Sanctuary. Single and greater
--- version, rank 1 (as PallyPower) and max rank; names come from the rank 1 ID.
+-- version, rank 1 (as PallyPower) and max rank; names come from the rank 1 ID. `extra` = other
+-- sources of the same effect: Blessing of Forgotten Kings 72586 (Drums of Forgotten Kings, +8 %
+-- stats, 30 min; checked on Wowhead WotLK and in ElvUI's raid buff reminder, 2026-11-11).
 M.PAL_BLESSINGS = {
     { single = { 19742, 48936 }, greater = { 25894, 48938 } },
     { single = { 19740, 48932 }, greater = { 25782, 48934 } },
-    { single = { 20217 }, greater = { 25898 } },
+    { single = { 20217 }, greater = { 25898 }, extra = { 72586 } },
     { single = { 20911 }, greater = { 25899 } },
 }
 -- Own defaults (without PallyPower): blessings, aura, seal per mode. Holy is not in the spec:
@@ -110,6 +116,8 @@ E["Bitte"] = "Plea"
 E["Gewünscht: %s"] = "Wanted: %s"
 E["Anderes Siegel aktiv - Klick wirkt das gewünschte"] = "Another seal is active - click casts the wanted one"
 E["Andere Aura aktiv - Klick wirkt die gewünschte"] = "Another aura is active - click casts the wanted one"
+E["Keine Aura aktiv - Klick wirkt die gewünschte"] = "No aura active - click casts the wanted one"
+E["aus PallyPower"] = "from PallyPower"
 E["Zorn der Gerechtigkeit gewünscht: Klick wirkt ihn"] = "Righteous Fury wanted: click casts it"
 E["Zorn der Gerechtigkeit nicht gewünscht: rot = aktiv, Klick bricht ihn ab"] = "Righteous Fury not wanted: red = active, click cancels it"
 E["Von: %s"] = "From: %s"
@@ -165,22 +173,71 @@ function M.PalModeText()
     return P.RotaName(mode)
 end
 
--- Buff on the player by any of the IDs or the names of these spell IDs (every rank, any language).
--- idList: one spell ID or a list of them; the lookup tables are built once per key.
+-- Player auras: one scan of buffs and debuffs per update into maps by spell ID and by name (the first
+-- aura of a kind wins, as in the aura order). Rescanned when GetTime() moved on or after UNIT_AURA
+-- on the player, so the many checks of one tick (seals, aura, blessings, Forbearance, rotation)
+-- share a single pass. Entry: { name, remain, count, spellId, caster, expires } (remain 999 = no expiry).
+local scan = { buffId = {}, buffName = {}, debuffId = {}, debuffName = {} }
+local function ScanList(func, byId, byName, now)
+    wipe(byId); wipe(byName)
+    for i = 1, 40 do
+        local n, _, _, count, _, _, expires, caster, _, _, spellId = func("player", i)
+        if not n then break end
+        local e = { name = n, count = count or 0, spellId = spellId, caster = caster, expires = expires,
+            remain = (expires and expires > 0) and math.max(expires - now, 0) or 999 }
+        if spellId and not byId[spellId] then byId[spellId] = e end
+        if not byName[n] then byName[n] = e end
+    end
+end
+function M.PalAuraScan()
+    local now = GetTime()
+    if scan.at ~= now then
+        scan.at = now
+        ScanList(UnitBuff, scan.buffId, scan.buffName, now)
+        ScanList(UnitDebuff, scan.debuffId, scan.debuffName, now)
+        M.palAuraScans = (M.palAuraScans or 0) + 1
+    end
+    return scan
+end
+function M.PalAuraDirty() scan.at = nil end
+function P.UNIT_AURA(unit) if unit == "player" then scan.at = nil end end
+
+-- Aura entry by spell ID only (e.g. a hidden marker that carries the name of a real spell).
+function M.PalBuffById(id) return M.PalAuraScan().buffId[id] end
+function M.PalDebuffById(id) return M.PalAuraScan().debuffId[id] end
+
+-- Lookup keys per idList (one spell ID or a list): the IDs and their names (every rank, any
+-- language), built once per key; the names come from GetSpellInfo and are cached with the key.
 local auraKeys = {}
-function M.PalHasAura(idList)
+local function Keys(idList)
     local k = auraKeys[idList]
     if not k then
         k = { ids = {}, names = {} }
         for _, id in ipairs(type(idList) == "table" and idList or { idList }) do
-            k.ids[id] = true
+            k.ids[#k.ids + 1] = id
             local n = Name(id)
             if n then k.names[#k.names + 1] = n end
         end
         auraKeys[idList] = k
     end
-    return M.HasBuff("player", k.names, k.ids)
+    return k
 end
+local function Find(idList, byId, byName)
+    local k = Keys(idList)
+    for _, id in ipairs(k.ids) do
+        local e = byId[id]
+        if e then return true, e.remain, e.name, e.spellId, e.count, e end
+    end
+    for _, n in ipairs(k.names) do
+        local e = byName[n]
+        if e then return true, e.remain, e.name, e.spellId, e.count, e end
+    end
+    return false, 0, nil, nil, 0
+end
+
+-- Buff / debuff on the player by any of the IDs or their names: up, remain, name, spellId, count, entry.
+function M.PalHasAura(idList) local s = M.PalAuraScan(); return Find(idList, s.buffId, s.buffName) end
+function M.PalHasDebuff(idList) local s = M.PalAuraScan(); return Find(idList, s.debuffId, s.debuffName) end
 
 -- -----------------------------------------------------------------------------------------------
 -- PallyPower (optional, read only: nothing here ever writes its tables)
@@ -245,18 +302,27 @@ end
 -- What the paladin wants (PallyPower when used, else own defaults)
 -- -----------------------------------------------------------------------------------------------
 -- Seal index for the current mode. AoE mode: Seal of Command. Own default: Seal of Vengeance
--- (Alliance) / Corruption (Horde) for Prot and Ret, Seal of Wisdom for Holy.
+-- (Alliance) / Corruption (Horde) for Prot and Ret, Seal of Wisdom for Holy. A seal the paladin
+-- doesn't know (Seal of Command untalented, Vengeance/Corruption before level 64, a PallyPower
+-- choice of another paladin's spec) falls back to Seal of Righteousness, which every paladin has.
+-- All seals are single-rank spells in 3.3, so M.KnowsSpell(id) is exact.
 function M.PalSealIndex(aoe)
     if aoe == nil then aoe = M.cfg and M.cfg.palAoe end
-    if aoe and M.activeRota ~= "holy" then return M.PAL_SEAL_INDEX.command end
-    local pp = M.PalPPSeal()
-    if pp then return pp end
-    if M.activeRota == "holy" then return M.PAL_SEAL_INDEX.wisdom end
-    return UnitFactionGroup("player") == "Horde" and M.PAL_SEAL_INDEX.corruption or M.PAL_SEAL_INDEX.vengeance
+    local idx
+    if aoe and M.activeRota ~= "holy" then idx = M.PAL_SEAL_INDEX.command
+    else
+        idx = M.PalPPSeal()
+        if not idx then
+            if M.activeRota == "holy" then idx = M.PAL_SEAL_INDEX.wisdom
+            else idx = UnitFactionGroup("player") == "Horde" and M.PAL_SEAL_INDEX.corruption or M.PAL_SEAL_INDEX.vengeance end
+        end
+    end
+    if not M.KnowsSpell(M.PAL_SEALS[idx]) then return M.PAL_SEAL_INDEX.righteousness end
+    return idx
 end
 function M.PalSealId(aoe) return M.PAL_SEALS[M.PalSealIndex(aoe)] end
 
--- Active seal: spell ID (or name) and remaining time; nil when no seal is up.
+-- Active seal: spell ID (or name) and remaining time; nil when no seal is up (lookups in the scan).
 function M.PalActiveSeal()
     for _, id in ipairs(M.PAL_SEALS) do
         local up, remain, name = M.PalHasAura(id)
@@ -294,6 +360,7 @@ function M.PalBlessingActive(index)
         b.all = {}
         for _, id in ipairs(b.single) do b.all[#b.all + 1] = id end
         for _, id in ipairs(b.greater) do b.all[#b.all + 1] = id end
+        for _, id in ipairs(b.extra or {}) do b.all[#b.all + 1] = id end
     end
     return M.PalHasAura(b.all)
 end
@@ -302,10 +369,31 @@ function M.PalJudgementId()
     return (M.cfg and M.cfg.palJudgement == "light") and M.PAL_ID.jol or M.PAL_ID.jow
 end
 
--- Forbearance on me (blocks Divine Protection, Divine Shield, Lay on Hands, Avenging Wrath): up, remaining.
+-- Forbearance on me (blocks Divine Protection, Divine Shield, Lay on Hands, Avenging Wrath): up,
+-- remaining, and since when it has been seen (for a Forbearance without expiry, see M.PalAwBlocked).
 function M.PalForbearance()
-    local up, remain = M.PlayerDebuffFull(M.SpellNames(M.PAL_ID.forbearance), { [M.PAL_ID.forbearance] = true })
-    return up, remain
+    local up, remain = M.PalHasDebuff(M.PAL_ID.forbearance)
+    if up then M.palFbSince = M.palFbSince or GetTime() else M.palFbSince = nil end
+    return up, remain, M.palFbSince
+end
+
+-- My own active aura: name and remaining time, nil when none of mine is up. The stance bar knows
+-- which aura is mine (active flag); without stance info, an aura buff cast by myself counts. Another
+-- paladin's aura on me is not mine.
+function M.PalMyAura()
+    local n = GetNumShapeshiftForms and GetNumShapeshiftForms() or 10
+    for i = 1, n do
+        local _, name, active = GetShapeshiftFormInfo(i)
+        if name and active then
+            local e = M.PalAuraScan().buffName[name]
+            return name, e and e.remain or 999
+        end
+    end
+    local s = M.PalAuraScan()
+    for _, id in ipairs(M.PAL_AURAS) do
+        local e = s.buffName[Name(id) or ""]
+        if e and e.caster == "player" then return e.name, e.remain end
+    end
 end
 
 -- -----------------------------------------------------------------------------------------------
@@ -321,7 +409,7 @@ M.PAL_BUTTONS = {
     { "dshield", "Bubble", M.PAL_ID.dshield },
     { "rf", "RF", M.PAL_ID.rf },
     { "seal", "Seal", M.PAL_SEALS[6] },                -- macro from M.PalSealId(false), see below
-    { "sealaoe", "AoE", M.PAL_ID.sealCommand },        -- Seal of Command for AoE (switchable in combat)
+    { "sealaoe", "AoE", M.PAL_ID.sealCommand },        -- Seal of Command for AoE (switchable in combat; Righteousness when Command is unknown)
     { "hs", "HS", M.PAL_ID.hs },
     { "judge", "Judge", M.PAL_ID.jow },                -- macro from M.PalJudgementId()
     { "hotr", "HotR", M.PAL_ID.hotr },
@@ -355,6 +443,7 @@ function P.CreateButtons()
         M.CreateSpellButton(M.KR, d[1], d[2], Name(d[3]) or ("spell:" .. d[3]), M.PalMacro(d[3], d[4]))
     end
     Dynamic("seal", function() return M.PalSealId(false) end)
+    Dynamic("sealaoe", function() return M.PalSealId(true) end)
     Dynamic("judge", M.PalJudgementId)
 end
 
@@ -362,7 +451,8 @@ end
 function M.PalRefreshMacros()
     if InCombatLockdown() then return end
     local b = M.buttons
-    if (b.seal and b.seal.palSpellId ~= M.PalSealId(false)) or (b.judge and b.judge.palSpellId ~= M.PalJudgementId()) then
+    if (b.seal and b.seal.palSpellId ~= M.PalSealId(false)) or (b.sealaoe and b.sealaoe.palSpellId ~= M.PalSealId(true))
+        or (b.judge and b.judge.palSpellId ~= M.PalJudgementId()) then
         M.RebuildSpellMacros()
     end
 end
@@ -395,13 +485,10 @@ end
 local function CheckAura(data, btn)
     local want = M.PalAuraId()
     SyncSpell(btn, want)
-    local up, remain, name = M.PalHasAura(want)
-    if up then return true, remain, name end
-    for _, id in ipairs(M.PAL_AURAS) do
-        local other, r, n = M.PalHasAura(id)
-        if other then return true, r, n, false, true end
-    end
-    return false, 0
+    local mine, remain = M.PalMyAura()
+    if not mine then return false, 0 end
+    if mine == Name(want) then return true, remain, mine end
+    return true, remain, mine, false, true -- another of my auras: yellow "?"
 end
 
 -- Wanted: click casts it, red while missing. Not wanted: click cancels it, red while active, grey otherwise.
@@ -462,8 +549,13 @@ function P.BuffList()
           end) },
         { key = "pal_aura", label = "Aura", cast = Name(M.PAL_AURAS[1]), iconSpellId = M.PAL_AURAS[1], required = true,
           warnText = "?", rotas = ALL, check = CheckAura, tooltip = Tip(function()
-              local t = { string.format(L("Gewünscht: %s"), Name(M.PalAuraId()) or "?") }
-              if not M.PalHasAura(M.PalAuraId()) then t[#t + 1] = L("Andere Aura aktiv - Klick wirkt die gewünschte") end
+              -- the source is shown, not second-guessed: after a PallyPower spec switch its aura index
+              -- can be the untouched default 1 (Devotion)
+              local t = { string.format(L("Gewünscht: %s"), Name(M.PalAuraId()) or "?"),
+                  M.PalPPAura() and L("aus PallyPower") or L("Eigene Vorgabe") }
+              local mine = M.PalMyAura()
+              if not mine then t[#t + 1] = L("Keine Aura aktiv - Klick wirkt die gewünschte")
+              elseif mine ~= Name(M.PalAuraId()) then t[#t + 1] = L("Andere Aura aktiv - Klick wirkt die gewünschte") end
               t[#t + 1] = L("Klick: Buff wirken")
               return t
           end) },
@@ -492,8 +584,11 @@ function P.BuffList()
 end
 
 -- Show the entries of the mode in a row (out of combat: secure buttons), blessing slots last.
+-- In combat (e.g. /reload in combat) the layout waits for PLAYER_REGEN_ENABLED.
 function P.LayoutBuffs(rota)
-    if InCombatLockdown() or not M.buffBar then return end
+    if not M.buffBar then return end
+    if InCombatLockdown() then M.palLayoutPending = true; return end
+    M.palLayoutPending = nil
     local x = 8
     for _, data in ipairs(M.buffList) do
         local btn = M.buffButtons[data.key]
@@ -541,10 +636,10 @@ end
 function P.Update(now)
     M.PalRefreshMacros()
     local S = M.PalState(now)
-    local reco, urgent, note
-    if S.rota == "prot" and M.PalProtReco then reco, urgent, note = M.PalProtReco(S)
+    local reco, urgent, note, prep
+    if S.rota == "prot" and M.PalProtReco then reco, urgent, note, prep = M.PalProtReco(S)
     elseif S.rota == "ret" and M.PalRetReco then reco, urgent, note = M.PalRetReco(S) end
-    M.MarkRecommended(reco, urgent)
+    M.MarkRecommended(reco, urgent, prep) -- prep: blue "not yet" even when clickable
     if not reco then M.OneButtonIdle(L("Rota folgt")) end
     M.NoteRecommendation(reco, note)
     M.palReco, M.palNote = reco, note
@@ -603,20 +698,20 @@ function M.PalSetJudgement(v)
     M.RebuildSpellMacros()
 end
 
-M.CLASS_OPTIONS.paladin = { type = "group", name = L("Paladin"), order = 2, hidden = function() return M.CLASS ~= "PALADIN" end,
+M.CLASS_OPTIONS.paladin = { type = "group", name = LF("Paladin"), order = 2, hidden = function() return M.CLASS ~= "PALADIN" end,
     get = function(info) return M.cfg[info[#info]] end, set = function(info, v) M.cfg[info[#info]] = v end, args = {
-    palRotationMode = { type = "select", name = L("Paladin-Modus"), order = 1,
-        desc = L("Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Heilig = nur Buff-Leiste, Schutz, Vergeltung). Die Buttons wechseln nur außerhalb des Kampfes."),
+    palRotationMode = { type = "select", name = LF("Paladin-Modus"), order = 1,
+        desc = LF("Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Heilig = nur Buff-Leiste, Schutz, Vergeltung). Die Buttons wechseln nur außerhalb des Kampfes."),
         values = function()
             return { auto = string.format(L("Automatisch (%s)"), P.RotaName(P.DesiredRota())), prot = L("Schutz"), ret = L("Vergeltung"), holy = L("Heilig: nur Buff-Leiste") }
         end,
         set = function(_, v) M.PalSetMode(v) end },
-    palJudgement = { type = "select", name = L("Richturteil"), order = 2,
+    palJudgement = { type = "select", name = LF("Richturteil"), order = 2,
         values = function() return { wisdom = Name(M.PAL_ID.jow) or L("Weisheit"), light = Name(M.PAL_ID.jol) or L("Licht") } end,
         set = function(_, v) M.PalSetJudgement(v) end },
-    palAoe = { type = "toggle", name = L("AoE-Modus (Siegel des Befehls, AoE-Prioritäten)"), order = 3, width = "full" },
-    palUsePallyPower = { type = "toggle", name = L("Einstellungen aus PallyPower übernehmen"), order = 4, width = "full",
-        desc = L("Siegel, Zorn der Gerechtigkeit, Aura und die dir zugewiesenen Segen kommen aus PallyPower (nur gelesen). Ausgegraut, wenn PallyPower nicht geladen ist."),
+    palAoe = { type = "toggle", name = LF("AoE-Modus (Siegel des Befehls, AoE-Prioritäten)"), order = 3, width = "full" },
+    palUsePallyPower = { type = "toggle", name = LF("Einstellungen aus PallyPower übernehmen"), order = 4, width = "full",
+        desc = LF("Siegel, Zorn der Gerechtigkeit, Aura und die dir zugewiesenen Segen kommen aus PallyPower (nur gelesen). Ausgegraut, wenn PallyPower nicht geladen ist."),
         disabled = function() return not M.PalPPLoaded() end,
         set = function(_, v) M.cfg.palUsePallyPower = v; M.PalBlessingSlotsReset() end },
     status = { type = "description", order = 5, fontSize = "medium", name = function() return table.concat(M.PalStatusLines(), "\n") end },
@@ -665,6 +760,10 @@ function P.SlashHelp()
     print(L("/ch aoe an|aus - AoE-Modus (Siegel des Befehls)"))
     print(L("/ch pallypower an|aus - Siegel, Aura, Zorn und Segen aus PallyPower übernehmen"))
     print(L("/ch pal - Paladin-Status (Siegel, Aura, Segen, PallyPower)"))
+end
+
+function P.PLAYER_REGEN_ENABLED()
+    if M.palLayoutPending then P.LayoutBuffs(M.activeRota) end
 end
 
 -- Talent change: the automatic flask follows the new tree at once (its cache holds 5 s otherwise).

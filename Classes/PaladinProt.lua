@@ -1,13 +1,15 @@
 -- ClassHelper: Protection Paladin rotation (see the spec's "Protection" part).
 --
 -- Contract (called by M.Pal.Update every 0.1 s while the Prot bar is shown):
---   M.PalProtReco(S) -> key, urgent, note
+--   M.PalProtReco(S) -> key, urgent, note, prep
 --     S     = M.PalState(): now, rota, aoe, usingPP, targetOK, targetHpPct, hpPct, manaPct, moving,
 --             inCombat, sealWantedId, sealId, sealRemain, sealOK, rfWanted, rfActive, judgementId,
---             forbearance; this file adds boss, bossRule, bossTarget (see M.PalProtBossState)
+--             forbearance; this file adds boss, bossRule, bossTarget, bossTargetIsMe, bossOnTarget,
+--             bossTargetStable, isTanking (see M.PalProtBossState)
 --     key   = a button key of M.ROTA_SETS.prot (hor, rd, dprot, loh, dshield, rf, seal, sealaoe, hs,
 --             judge, hotr, cons, sor, how, avs, plea) or nil (no glow, one-button idle)
 --     urgent = red glow instead of green; note = text for the info line (German key through M.L)
+--     prep  = show the button blue ("not yet") even when it is clickable
 --   M.PalProtCombatLog(...) gets every combat log event (3.3.5 layout) while in Prot mode.
 --
 -- Priority: defensive slot (M.PalProtDefensiveReco) > taunt (M.PalProtTauntReco) > Righteous Fury >
@@ -22,21 +24,41 @@
 -- (2026-11-11); names only ever come from GetSpellInfo(id).
 local M = select(2, ...).M
 if not M then return end
-local L, E = M.L, M.L_EN
+local L, E, LF = M.L, M.L_EN, M.LF
 local ID = M.PAL_ID
 
 M.PAL_PROT_LOOKAHEAD = 0.3   -- a spell ready within this many seconds still counts as "next"
 M.PAL_TAUNT_SETTLE = 1.5     -- after a taunt cast: no further taunt this long (boss target updates)
-M.PAL_OWN_FADE = 1.5         -- my own swap debuff counts as gone with this little time left
+M.PAL_OWN_FADE = 1.5         -- my own swap debuff about to fall off: taunt shown blue (prep), not red
 M.PAL_TAUNT_SOON = 2.0       -- taunt wanted but both taunts on cooldown: show the sooner one up to this long
+M.PAL_TARGET_STABLE = 0.5    -- the boss's target must be the same this long before a taunt (cast flips)
 
 -- -----------------------------------------------------------------------------------------------
 -- Boss rules
 -- -----------------------------------------------------------------------------------------------
--- Taunt rules. kind "stacks": swap debuff counted per player from the combat log; taunt when the
--- boss targets another player with >= the threshold and my own stacks are gone. kind "cast": the
--- boss's cast (or its aura) marks its target for `window` s; taunt when the boss targets that player.
+-- Taunt rules. kind "stacks": the swap debuff is read from the auras (UnitDebuff on the boss's
+-- target and on me: stacks 4th, spell ID 11th value), so death, a battle res or a missed combat log
+-- event never leaves stale counts. Two modes:
+--   mode "clear" (default): taunt when the other tank has >= the threshold and my own stacks are 0
+--     (a new stack on top of old ones adds up); while mine fall off within PAL_OWN_FADE s the button
+--     is shown blue only.
+--   mode "leapfrog": taunt when the other tank has >= the threshold and my stacks are below theirs,
+--     or equal and theirs are newer (later expiry = the more recent stack); used where the debuff
+--     never falls off before the swap and carrying stacks over is the intended tactic.
+-- kind "cast": the boss's cast (or its aura) marks its target for `window` s (combat log); taunt
+-- when the boss targets that player.
 -- opt = settings key (on/off), opt .. "N" = threshold, opt .. "H" = heroic threshold (when heroic).
+--
+-- Per boss (durations from the local DBM timers and Wowhead WotLK, tactics from warcraft.wiki.gg):
+--   Lady Deathwhisper, Touch of Insignificance: 30 s, a stack about every 9-15 s -> "clear".
+--   Festergut, Gastric Bloat: 100 s (DBM timerGastricBloat, Wowhead 1.667 min), a stack about every
+--     13 s, 10 stacks explode -> "clear" (own == 0): carrying stacks over would be lethal. With the
+--     100 s duration the taunt usually comes at 7-8 stacks on the other tank (own stacks gone).
+--   Professor Putricide, Mutated Plague (phase 3): a stack every 10 s on the tank; it lasts 60 s+
+--     (Wowhead lists 3 min) and heals Putricide for every stack when it expires or is removed, so it
+--     is never left to fall off: the tanks alternate A2/B2/A3/B3/... (warcraft.wiki.gg) -> "leapfrog".
+--   Sindragosa, Mystic Buffet (phase 3): 8 s (DBM), refreshed every 6 s -> "clear".
+--   Gormok, Impale: 40 s (Wowhead), every 8-10 s -> "clear".
 M.PAL_TAUNT_RULES = {
     { key = "dw", opt = "palT_dw", label = "Lady Todeswisper", npc = { 36855 }, kind = "stacks",
       ids = { 71204 }, n = 3, min = 2, max = 5 },                                  -- Touch of Insignificance
@@ -44,7 +66,7 @@ M.PAL_TAUNT_RULES = {
       ids = { 72410 }, window = 20 },                                               -- Rune of Blood
     { key = "fester", opt = "palT_fester", label = "Fauldarm", npc = { 36626 }, kind = "stacks",
       ids = { 72219, 72551, 72552, 72553 }, n = 6, min = 6, max = 9 },             -- Gastric Bloat
-    { key = "putri", opt = "palT_putri", label = "Professor Seuchenmord", npc = { 36678 }, kind = "stacks",
+    { key = "putri", opt = "palT_putri", label = "Professor Seuchenmord", npc = { 36678 }, kind = "stacks", mode = "leapfrog",
       ids = { 72451, 72463, 72671, 72672 }, n = 2, min = 1, max = 4 },             -- Mutated Plague (P3)
     { key = "sindra", opt = "palT_sindra", label = "Sindragosa", npc = { 36853 }, kind = "stacks",
       ids = { 70127, 72528, 72529, 72530 }, n = 3, min = 2, max = 6 },             -- Mystic Buffet (P3)
@@ -71,7 +93,6 @@ M.PAL_DEF = {
 M.PAL_PUNGENT_AFTER = 33.5   -- Pungent Blight about this long after the 3rd Inhaled Blight (DBM timer)
 M.PAL_PUNGENT_EARLY = 2      -- ... the moment starts this early and ends with the window after it
 M.PAL_BUFFET_IDS = { 70127, 72528, 72529, 72530 }
-M.PAL_BUFFET_SET = { [70127] = true, [72528] = true, [72529] = true, [72530] = true }
 
 -- Settings (profile)
 local D = M.DEFAULTS.profile
@@ -82,7 +103,9 @@ for _, r in ipairs(M.PAL_TAUNT_RULES) do
     if r.h then D[r.opt .. "H"] = r.h end
 end
 D.palDef = true
-D.palD_frenzy, D.palD_pungent, D.palD_reaper, D.palD_stomp = true, true, true, true
+-- Gormok's Staggering Stomp is off by default: it is a short raid-wide knock-down a tank usually
+-- doesn't need Divine Protection for.
+D.palD_frenzy, D.palD_pungent, D.palD_reaper, D.palD_stomp = true, true, true, false
 D.palD_buffet, D.palD_buffetN = true, 5
 D.palDefHp = true
 D.palDefDPPct, D.palDefLoHPct = 35, 15
@@ -101,22 +124,22 @@ E["Der Lichkönig (heroisch)"] = "The Lich King (heroic)"
 E["Schutz: Spott"] = "Protection: taunt"
 E["Schutz: Verteidigung"] = "Protection: defensives"
 E["Spott-Empfehlung"] = "Taunt recommendation"
-E["Hand der Abrechnung (rot), bei Abklingzeit Rechtschaffene Verteidigung auf das Ziel des Bosses: wenn der Boss einen anderen Spieler angreift, der die Wechsel-Schwächung ab der Schwelle trägt, und deine eigenen Stapel weg sind. Nie, solange der Boss dich angreift. Der Boss muss dein Ziel sein."] =
-    "Hand of Reckoning (red), Righteous Defense on the boss's target while it is on cooldown: when the boss attacks another player who carries the swap debuff at the threshold or more and your own stacks are gone. Never while the boss attacks you. The boss must be your target."
+E["Hand der Abrechnung (rot), bei Abklingzeit Rechtschaffene Verteidigung auf das Ziel des Bosses: wenn der Boss einen anderen Spieler angreift, der die Wechsel-Schwächung ab der Schwelle trägt, und deine eigenen Stapel weg sind (Seuchenmord: wenn du weniger Stapel hast). Nie, solange du den Boss tankst. Der Boss muss dein Ziel sein."] =
+    "Hand of Reckoning (red), Righteous Defense on the boss's target while it is on cooldown: when the boss attacks another player who carries the swap debuff at the threshold or more and your own stacks are gone (Putricide: when you have fewer stacks). Never while you tank the boss. The boss must be your target."
 E["Stapel"] = "Stacks"
 E["Stapel (heroisch)"] = "Stacks (heroic)"
 E["Verteidigung bei Boss-Mechaniken"] = "Defensives on boss mechanics"
-E["Göttlicher Schutz (rot) bei: Saurfangs Raserei (wenn er dich angreift), Fauldarms Stechender Seuche (auch kurz vor der erwarteten nach dem 3. Einatmen), Seelenernter auf dir, Gormoks Stampfen, Sindragosas Mystischem Puffer auf dir ab den eingestellten Stapeln. Nur wenn bereit und ohne Vorahnung."] =
-    "Divine Protection (red) on: Saurfang's Frenzy (when he attacks you), Festergut's Pungent Blight (also shortly before the expected one after the 3rd inhale), Soul Reaper on you, Gormok's Stomp, Sindragosa's Mystic Buffet on you at the set stacks. Only when ready and without Forbearance."
+E["Göttlicher Schutz (rot) bei: Saurfangs Raserei (wenn du ihn tankst), Fauldarms Stechender Seuche (auch kurz vor der erwarteten nach dem 3. Einatmen), Seelenernter auf dir, Gormoks Stampfen (Standard aus), Sindragosas Mystischem Puffer auf dir ab den eingestellten Stapeln. Nur wenn bereit und ohne Vorahnung."] =
+    "Divine Protection (red) on: Saurfang's Frenzy (when you tank him), Festergut's Pungent Blight (also shortly before the expected one after the 3rd inhale), Soul Reaper on you, Gormok's Stomp (off by default), Sindragosa's Mystic Buffet on you at the set stacks. Only when ready and without Forbearance."
 E["Mystischer Puffer: Stapel auf dir"] = "Mystic Buffet: stacks on you"
 E["Lebens-Schwellen"] = "Health thresholds"
 E["%s bei Leben unter (%%)"] = "%s below health (%%)"
 E["Gottesschild als letzte Rettung"] = "Divine Shield as last resort"
 E["Standard aus: für Tanks nur als letzte Rettung gedacht."] = "Off by default: for tanks only meant as a last resort."
-E["Spott: %s hat %d Stapel %s"] = "Taunt: %s has %d stacks of %s"
+E["Spott: %s hat %d Stapel %s (du: %d)"] = "Taunt: %s has %d stacks of %s (you: %d)"
 E["Spott: %s auf %s"] = "Taunt: %s on %s"
 E["%s nicht bereit - %s"] = "%s not ready - %s"
-E["Spott nötig - Boss ins Ziel nehmen | %s"] = "Taunt needed - target the boss | %s"
+E["Spott nötig - Boss ins Ziel nehmen: %s"] = "Taunt needed - target the boss: %s"
 E["Verteidigung: %s"] = "Defensive: %s"
 E["Leben %d%%: %s"] = "Health %d%%: %s"
 E["%s fehlt"] = "%s missing"
@@ -179,20 +202,31 @@ local function Ready(S, id, unit)
     return cd ~= nil and cd <= M.PAL_PROT_LOOKAHEAD
 end
 
-local function IdNames(ids)
-    local list = {}
-    for _, id in ipairs(ids) do local n = SN(id); if n then list[#list + 1] = n end end
-    return list
+-- My own debuff from a list of IDs (the per-update aura scan): stacks (0 = none), remaining, expiry.
+local function OwnDebuff(ids)
+    local up, remain, _, _, count, e = M.PalHasDebuff(ids)
+    if not up then return 0, 0, 0 end
+    return math.max(count or 0, 1), remain, (e and e.expires) or 0
 end
 
--- My own debuff from a rule: stacks (0 = none) and remaining time.
-local ownKeys = {}
-local function OwnDebuff(ids, set)
-    local k = ownKeys[ids]
-    if not k then k = IdNames(ids); ownKeys[ids] = k end
-    local up, remain, _, _, count = M.PlayerDebuffFull(k, set)
-    if not up then return 0, 0 end
-    return math.max(count or 0, 1), remain
+-- Stacks of a rule's debuff on a unit, read from its auras: stacks (0 = none) and expiry (0 = unknown).
+-- Matched by spell ID, by name as a fallback (cores with other difficulty IDs).
+function M.PalUnitStacks(unit, rule)
+    if not unit or not UnitExists(unit) then return 0, 0 end
+    if UnitIsUnit(unit, "player") then
+        local n, _, exp = OwnDebuff(rule.ids)
+        return n, exp
+    end
+    if not rule.nameSet then
+        rule.nameSet = {}
+        for _, id in ipairs(rule.ids) do local n = SN(id); if n then rule.nameSet[n] = true end end
+    end
+    for i = 1, 40 do
+        local n, _, _, count, _, _, expires, _, _, _, spellId = UnitDebuff(unit, i)
+        if not n then break end
+        if (spellId and rule.idSet[spellId]) or rule.nameSet[n] then return math.max(count or 0, 1), expires or 0 end
+    end
+    return 0, 0
 end
 
 -- Heroic: 3/4 (10/25 heroic), or ICC on cores that report 1/2 with the dynamic flag (as DBM-Core).
@@ -205,39 +239,28 @@ function M.PalHeroic()
 end
 
 -- -----------------------------------------------------------------------------------------------
--- Combat log tracking (stacks per player, cast marks, defensive moments)
+-- Combat log tracking (cast marks, defensive moments)
 -- -----------------------------------------------------------------------------------------------
--- T.stacks[guid][rule key] = stacks, T.marks[guid][rule key] = time of the boss cast on that player,
--- T.moments[name] = { at, untilT }, T.pungentAt = expected Pungent Blight, T.lastRule = last rule
--- whose spell was seen, T.bossNpc = boss of the current rules. Reset on combat end and boss change.
-M.palProt = { stacks = {}, marks = {}, moments = {} }
+-- T.marks[guid][rule key] = time of the boss cast on that player, T.moments[name] = { at, untilT },
+-- T.pungentAt = expected Pungent Blight, T.lastRule = last rule whose spell was seen in a SPELL_*
+-- event, T.bossNpc = boss of the current rules, T.tgtGuid / T.tgtSince = the boss's target and since
+-- when. Reset on combat end and boss change. Swap-debuff stacks are not tracked here: they come
+-- from the auras (M.PalUnitStacks).
+M.palProt = { marks = {}, moments = {} }
 function M.PalProtReset()
     local T = M.palProt
-    T.stacks, T.marks, T.moments = {}, {}, {}
-    T.pungentAt, T.lastRule, T.bossNpc = nil, nil, nil
+    T.marks, T.moments = {}, {}
+    T.pungentAt, T.lastRule, T.bossNpc, T.tgtGuid, T.tgtSince = nil, nil, nil, nil, nil
 end
 
 -- Boss change: drop what other bosses' rules collected (the new boss's own events may arrive
 -- before its unit is seen, so they stay).
 function M.PalProtKeepOnly(key)
     local T = M.palProt
-    for _, t in ipairs({ T.stacks, T.marks }) do
-        for _, perRule in pairs(t) do
-            for k in pairs(perRule) do if k ~= key then perRule[k] = nil end end
-        end
+    for _, perRule in pairs(T.marks) do
+        for k in pairs(perRule) do if k ~= key then perRule[k] = nil end end
     end
     if key ~= "fester" then T.pungentAt = nil end
-end
-
-local function SetStacks(guid, key, n)
-    if not guid then return end
-    local T = M.palProt
-    T.stacks[guid] = T.stacks[guid] or {}
-    T.stacks[guid][key] = n > 0 and n or nil
-end
-function M.PalStacks(guid, key)
-    local s = guid and M.palProt.stacks[guid]
-    return s and s[key] or 0
 end
 
 local function Moment(name, window, now)
@@ -246,23 +269,20 @@ end
 
 -- 3.3.5: timestamp, event, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, spellId,
 -- spellName, school, then auraType and amount for the aura events (APPLIED has no amount).
+-- Only SPELL_* events carry a spell ID in the 9th place (SWING_DAMAGE has the damage there).
 function M.PalProtCombatLog(_, event, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, spellId, spellName, school, auraType, amount)
-    if not spellId then return end
+    if not spellId or type(event) ~= "string" or event:sub(1, 6) ~= "SPELL_" then return end
     local T, now = M.palProt, GetTime()
     local rule = M.PAL_RULE_BY_SPELL[spellId]
     if rule then
         T.lastRule = rule
-        if rule.kind == "stacks" then
-            local old = M.PalStacks(dstGUID, rule.key)
-            if event == "SPELL_AURA_APPLIED" then SetStacks(dstGUID, rule.key, tonumber(amount) or 1)
-            elseif event == "SPELL_AURA_APPLIED_DOSE" then SetStacks(dstGUID, rule.key, tonumber(amount) or (old + 1))
-            elseif event == "SPELL_AURA_REMOVED_DOSE" then SetStacks(dstGUID, rule.key, tonumber(amount) or math.max(old - 1, 0))
-            elseif event == "SPELL_AURA_REMOVED" then SetStacks(dstGUID, rule.key, 0) end
-        elseif dstGUID and (event == "SPELL_CAST_SUCCESS" or event == "SPELL_AURA_APPLIED") then
-            T.marks[dstGUID] = T.marks[dstGUID] or {}
-            T.marks[dstGUID][rule.key] = now
-        elseif dstGUID and event == "SPELL_AURA_REMOVED" and T.marks[dstGUID] then
-            T.marks[dstGUID][rule.key] = nil
+        if rule.kind == "cast" then
+            if dstGUID and (event == "SPELL_CAST_SUCCESS" or event == "SPELL_AURA_APPLIED") then
+                T.marks[dstGUID] = T.marks[dstGUID] or {}
+                T.marks[dstGUID][rule.key] = now
+            elseif dstGUID and event == "SPELL_AURA_REMOVED" and T.marks[dstGUID] then
+                T.marks[dstGUID][rule.key] = nil
+            end
         end
     end
     local DF = M.PAL_DEF
@@ -301,8 +321,10 @@ function M.PalProtFindBoss()
 end
 
 -- Adds S.boss (unit), S.bossRule, S.bossTarget (unit of the boss's target), S.bossTargetIsMe,
--- S.bossOnTarget (the boss is my target, so the fixed taunt macros hit it). Resets the tracking on
--- combat end and when another boss with rules shows up.
+-- S.bossTargetStable (the same target for PAL_TARGET_STABLE s), S.isTanking (threat API: I am the
+-- boss's tank; a brief target flip during a cast doesn't change it), S.bossOnTarget (the boss is my
+-- target, so the fixed taunt macros hit it). Resets the tracking on combat end and when another boss
+-- with rules shows up.
 function M.PalProtBossState(S)
     local T = M.palProt
     if S.inCombat then T.inCombat = true elseif T.inCombat then T.inCombat = false; M.PalProtReset() end
@@ -311,12 +333,18 @@ function M.PalProtBossState(S)
         if T.bossNpc and T.bossNpc ~= npc then M.PalProtKeepOnly(rule.key) end
         T.bossNpc = npc
     end
-    S.boss, S.bossRule = u, rule
+    S.boss, S.bossRule, S.isTanking = u, rule, false
     if u then
+        S.isTanking = UnitDetailedThreatSituation and UnitDetailedThreatSituation("player", u) and true or false
         local tu = (u == "target") and "targettarget" or (u .. "target")
         if UnitExists(tu) then
             S.bossTarget = tu
             S.bossTargetIsMe = UnitIsUnit(tu, "player") and true or false
+            local g = UnitGUID(tu)
+            if g ~= T.tgtGuid then T.tgtGuid, T.tgtSince = g, S.now end
+            S.bossTargetStable = S.now - (T.tgtSince or S.now) >= M.PAL_TARGET_STABLE
+        else
+            T.tgtGuid = nil
         end
         S.bossOnTarget = (u == "target") or (UnitExists("target") and UnitIsUnit("target", u)) or false
     end
@@ -346,10 +374,11 @@ function M.PalProtMoment(S)
         or (T.pungentAt and now >= T.pungentAt - M.PAL_PUNGENT_EARLY and now <= T.pungentAt + M.PAL_DEF.pungent.window)) then
         return SN(69195)
     end
-    if cfg.palD_frenzy and active("frenzy") and (S.bossTargetIsMe or not S.bossTarget) then return SN(72737) end
+    -- Frenzy only when the boss is found and I am its tank (threat API)
+    if cfg.palD_frenzy and active("frenzy") and S.boss and S.isTanking then return SN(72737) end
     if cfg.palD_stomp and active("stomp") then return SN(66330) end
     if cfg.palD_buffet then
-        local n = OwnDebuff(M.PAL_BUFFET_IDS, M.PAL_BUFFET_SET)
+        local n = OwnDebuff(M.PAL_BUFFET_IDS)
         if n >= (tonumber(cfg.palD_buffetN) or 5) then return string.format("%s %d", SN(70127) or "?", n) end
     end
 end
@@ -359,7 +388,7 @@ function M.PalProtDefensiveReco(S)
     local cfg = M.cfg
     local hp = S.hpPct
     local shielded = BuffUp(ID.dprot) or BuffUp(ID.dshield)
-    local ad = BuffUp(ID.ardent) and SN(ID.ardent) or nil
+    local ad = M.PalHasDebuff(ID.ardent) and SN(ID.ardent) or nil -- Ardent Defender's lockout is a debuff
     local function hpNote(id)
         local n = string.format(L("Leben %d%%: %s"), math.floor(hp + 0.5), SN(id) or "?")
         if ad then n = string.format(L("%s (%s ausgelöst)"), n, ad) end
@@ -386,16 +415,24 @@ function M.PalTauntThreshold(rule)
     return tonumber(cfg[rule.opt .. "N"]) or rule.n
 end
 
--- Why the other player needs to be taunted off (note text), nil when not.
+-- Why the other player needs to be taunted off: note text and prep (true = not yet, show blue), nil
+-- when not. See the rule modes above.
 function M.PalTauntReason(S, rule, unit)
-    local guid, name = UnitGUID(unit), UnitName(unit) or "?"
+    local name = UnitName(unit) or "?"
     if rule.kind == "stacks" then
-        local n = M.PalStacks(guid, rule.key)
+        local n, theirExp = M.PalUnitStacks(unit, rule)
         if n < M.PalTauntThreshold(rule) then return nil end
-        local mine, remain = OwnDebuff(rule.ids, rule.idSet)
-        if mine > 0 and remain > M.PAL_OWN_FADE then return nil end
-        return string.format(L("Spott: %s hat %d Stapel %s"), name, n, SN(rule.ids[1]) or "?")
+        local mine, remain, myExp = OwnDebuff(rule.ids)
+        local why = string.format(L("Spott: %s hat %d Stapel %s (du: %d)"), name, n, SN(rule.ids[1]) or "?", mine)
+        if rule.mode == "leapfrog" then
+            if mine < n or (mine == n and theirExp > myExp) then return why end
+            return nil
+        end
+        if mine == 0 then return why end
+        if remain <= M.PAL_OWN_FADE then return why, true end -- mine are about to fall off: blue only
+        return nil
     end
+    local guid = UnitGUID(unit)
     local marks = M.palProt.marks[guid]
     local at = marks and marks[rule.key]
     if not at or S.now - at > rule.window then return nil end
@@ -404,26 +441,28 @@ function M.PalTauntReason(S, rule, unit)
     return string.format(L("Spott: %s auf %s"), SN(rule.ids[1]) or "?", name)
 end
 
+-- -> key, urgent, note, prep
 function M.PalProtTauntReco(S)
     local cfg = M.cfg
     local rule, tu = S.bossRule, S.bossTarget
-    if not cfg.palTaunt or not S.inCombat or not rule or not tu or S.bossTargetIsMe then return nil end
+    if not cfg.palTaunt or not S.inCombat or not rule or not tu or S.bossTargetIsMe or S.isTanking then return nil end
     if not cfg[rule.opt] or (rule.heroicOnly and not M.PalHeroic()) then return nil end
     if not UnitIsPlayer(tu) then return nil end
-    local reason = M.PalTauntReason(S, rule, tu)
+    if not S.bossTargetStable then return nil end -- a brief target flip during a cast
+    local reason, prep = M.PalTauntReason(S, rule, tu)
     if not reason then return nil end
     if not S.bossOnTarget then S.tauntHint = reason; return nil end -- the macros work on my target only
     for _, id in ipairs({ ID.hor, ID.rd }) do -- a taunt just cast: wait for the boss to turn
         if S.now - (M.lastCastAt[SN(id) or ""] or -100) < M.PAL_TAUNT_SETTLE then return nil end
     end
     local hor = Avail(S, ID.hor, "target")
-    if hor and hor <= M.PAL_PROT_LOOKAHEAD then return "hor", true, reason end
+    if hor and hor <= M.PAL_PROT_LOOKAHEAD then return "hor", not prep, reason, prep end
     local rd = Avail(S, ID.rd, tu)
     local rdNote = string.format(L("%s nicht bereit - %s"), SN(ID.hor) or "?", reason)
-    if rd and rd <= M.PAL_PROT_LOOKAHEAD then return "rd", true, rdNote end
+    if rd and rd <= M.PAL_PROT_LOOKAHEAD then return "rd", not prep, rdNote, prep end
     -- both cooling down: the sooner one (blue until ready)
-    if hor and hor <= M.PAL_TAUNT_SOON and (not rd or hor <= rd) then return "hor", true, reason end
-    if rd and rd <= M.PAL_TAUNT_SOON then return "rd", true, rdNote end
+    if hor and hor <= M.PAL_TAUNT_SOON and (not rd or hor <= rd) then return "hor", not prep, reason, prep end
+    if rd and rd <= M.PAL_TAUNT_SOON then return "rd", not prep, rdNote, prep end
     S.tauntHint = reason
 end
 
@@ -488,14 +527,21 @@ function M.PalProtRotation(S)
     if soonKey then return soonKey, false, string.format(L("Nächste: %s"), SN(soonId) or "?") end
 end
 
+-- The info line shows the taunt reason (who, how many stacks, mine) together with the rotation note.
 function M.PalProtReco(S)
     M.PalProtBossState(S)
     local key, urgent, note = M.PalProtDefensiveReco(S)
     if key then return key, urgent, note end
-    key, urgent, note = M.PalProtTauntReco(S)
-    if key then return key, urgent, note end
+    local tkey, turgent, tnote, tprep = M.PalProtTauntReco(S)
     key, urgent, note = M.PalProtRotation(S)
-    if S.tauntHint then note = string.format(L("Spott nötig - Boss ins Ziel nehmen | %s"), note or S.tauntHint) end
+    if tkey then
+        if note then tnote = tnote .. " | " .. note end
+        return tkey, turgent, tnote, tprep
+    end
+    if S.tauntHint then
+        local hint = string.format(L("Spott nötig - Boss ins Ziel nehmen: %s"), S.tauntHint)
+        note = note and (hint .. " | " .. note) or hint
+    end
     return key, urgent, note
 end
 
@@ -504,8 +550,8 @@ end
 -- -----------------------------------------------------------------------------------------------
 local function hidden() return M.CLASS ~= "PALADIN" end
 local tauntArgs = {
-    palTaunt = { type = "toggle", name = L("Spott-Empfehlung"), order = 1, width = "full",
-        desc = L("Hand der Abrechnung (rot), bei Abklingzeit Rechtschaffene Verteidigung auf das Ziel des Bosses: wenn der Boss einen anderen Spieler angreift, der die Wechsel-Schwächung ab der Schwelle trägt, und deine eigenen Stapel weg sind. Nie, solange der Boss dich angreift. Der Boss muss dein Ziel sein.") },
+    palTaunt = { type = "toggle", name = LF("Spott-Empfehlung"), order = 1, width = "full",
+        desc = LF("Hand der Abrechnung (rot), bei Abklingzeit Rechtschaffene Verteidigung auf das Ziel des Bosses: wenn der Boss einen anderen Spieler angreift, der die Wechsel-Schwächung ab der Schwelle trägt, und deine eigenen Stapel weg sind (Seuchenmord: wenn du weniger Stapel hast). Nie, solange du den Boss tankst. Der Boss muss dein Ziel sein.") },
 }
 for i, r in ipairs(M.PAL_TAUNT_RULES) do
     local base = 10 * i
@@ -513,10 +559,10 @@ for i, r in ipairs(M.PAL_TAUNT_RULES) do
     tauntArgs[r.opt] = { type = "toggle", order = base, width = r.n and "double" or "full", disabled = function() return not M.cfg.palTaunt end,
         name = function() return L(r.label) .. " - " .. (SN(r.ids[1]) or "?") end }
     if r.n then
-        tauntArgs[r.opt .. "N"] = { type = "range", name = L("Stapel"), order = base + 1, min = r.min, max = r.max, step = 1, disabled = off }
+        tauntArgs[r.opt .. "N"] = { type = "range", name = LF("Stapel"), order = base + 1, min = r.min, max = r.max, step = 1, disabled = off }
     end
     if r.h then
-        tauntArgs[r.opt .. "H"] = { type = "range", name = L("Stapel (heroisch)"), order = base + 2, min = r.min, max = r.max, step = 1, disabled = off }
+        tauntArgs[r.opt .. "H"] = { type = "range", name = LF("Stapel (heroisch)"), order = base + 2, min = r.min, max = r.max, step = 1, disabled = off }
     end
 end
 
@@ -529,25 +575,25 @@ local function ev(order, spell)
         name = function() return SN(spell) or "?" end }
 end
 
-M.CLASS_OPTIONS.paladinProtTaunt = { type = "group", name = L("Schutz: Spott"), order = 2.1, hidden = hidden,
+M.CLASS_OPTIONS.paladinProtTaunt = { type = "group", name = LF("Schutz: Spott"), order = 2.1, hidden = hidden,
     get = function(info) return M.cfg[info[#info]] end, set = function(info, v) M.cfg[info[#info]] = v end, args = tauntArgs }
 
-M.CLASS_OPTIONS.paladinProtDef = { type = "group", name = L("Schutz: Verteidigung"), order = 2.2, hidden = hidden,
+M.CLASS_OPTIONS.paladinProtDef = { type = "group", name = LF("Schutz: Verteidigung"), order = 2.2, hidden = hidden,
     get = function(info) return M.cfg[info[#info]] end, set = function(info, v) M.cfg[info[#info]] = v end, args = {
-    palDef = { type = "toggle", name = L("Verteidigung bei Boss-Mechaniken"), order = 1, width = "full",
-        desc = L("Göttlicher Schutz (rot) bei: Saurfangs Raserei (wenn er dich angreift), Fauldarms Stechender Seuche (auch kurz vor der erwarteten nach dem 3. Einatmen), Seelenernter auf dir, Gormoks Stampfen, Sindragosas Mystischem Puffer auf dir ab den eingestellten Stapeln. Nur wenn bereit und ohne Vorahnung.") },
+    palDef = { type = "toggle", name = LF("Verteidigung bei Boss-Mechaniken"), order = 1, width = "full",
+        desc = LF("Göttlicher Schutz (rot) bei: Saurfangs Raserei (wenn du ihn tankst), Fauldarms Stechender Seuche (auch kurz vor der erwarteten nach dem 3. Einatmen), Seelenernter auf dir, Gormoks Stampfen (Standard aus), Sindragosas Mystischem Puffer auf dir ab den eingestellten Stapeln. Nur wenn bereit und ohne Vorahnung.") },
     palD_frenzy = ev(2, 72737),
     palD_pungent = ev(3, 69195),
     palD_reaper = ev(4, 69409),
     palD_stomp = ev(5, 66330),
     palD_buffet = ev(6, 70127),
-    palD_buffetN = { type = "range", name = L("Mystischer Puffer: Stapel auf dir"), order = 7, min = 2, max = 10, step = 1,
+    palD_buffetN = { type = "range", name = LF("Mystischer Puffer: Stapel auf dir"), order = 7, min = 2, max = 10, step = 1,
         disabled = function() return not M.cfg.palDef or not M.cfg.palD_buffet end },
-    palDefHp = { type = "toggle", name = L("Lebens-Schwellen"), order = 10, width = "full" },
+    palDefHp = { type = "toggle", name = LF("Lebens-Schwellen"), order = 10, width = "full" },
     palDefDPPct = pct(ID.dprot, "palDefDPPct", 11),
     palDefLoHPct = pct(ID.loh, "palDefLoHPct", 12, 40),
-    palDefDS = { type = "toggle", name = L("Gottesschild als letzte Rettung"), order = 13, width = "full",
-        desc = L("Standard aus: für Tanks nur als letzte Rettung gedacht."),
+    palDefDS = { type = "toggle", name = LF("Gottesschild als letzte Rettung"), order = 13, width = "full",
+        desc = LF("Standard aus: für Tanks nur als letzte Rettung gedacht."),
         disabled = function() return not M.cfg.palDefHp end },
     palDefDSPct = pct(ID.dshield, "palDefDSPct", 14, 40),
 } }

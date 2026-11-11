@@ -439,6 +439,8 @@ local L_EN = {
     -- class modules (shared texts; the modules add their own keys to M.L_EN)
     ["Dauer: %.0fs"] = "Duration: %.0fs",
     ["ClassHelper: Nur für Magier."] = "ClassHelper: Mage only.",
+    ["ClassHelper: Das alte Addon MageHelper ist noch installiert. Bitte den Ordner Interface\\AddOns\\MageHelper löschen, sonst laufen beide. Einstellungen übernehmen: siehe README, Abschnitt \"Coming from MageHelper\"."] =
+        "ClassHelper: the old MageHelper addon is still installed. Please delete the folder Interface\\AddOns\\MageHelper, otherwise both run. Moving your settings: see the README, section \"Coming from MageHelper\".",
 }
 local useEnglish = GetLocale() ~= "deDE"
 local function L(s)
@@ -2349,7 +2351,7 @@ function M.CreateBarTexts()
     mm:RegisterForClicks("LeftButtonUp")
     mm:SetScript("OnClick", function()
         cfg.shown = not cfg.shown
-        if cfg.shown then KR:Show() else KR:Hide() end
+        M.ApplyBarShown()
     end)
     mm:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
@@ -2788,11 +2790,11 @@ local function UpdateButtonCooldownVisuals()
     end
 end
 
-local function MarkRecommended(key, urgent)
+local function MarkRecommended(key, urgent, prep)
     for k,b in pairs(buttons) do ButtonSetState(b, "normal", 0.35) end
     if key and buttons[key] then
         local usable, remain = ButtonUsableNow(buttons[key])
-        if usable then
+        if usable and not prep then -- prep: the caller says "not yet" (e.g. a taunt a moment too early)
             ButtonSetState(buttons[key], urgent and "urgent" or "glow", 1)
         else
             -- Not really clickable yet: blue prep state instead of strong usable glow.
@@ -3565,6 +3567,9 @@ end
 
 -- Main bar visible: switched on and the active mode has buttons.
 function M.BarWanted() return cfg.shown and not M.emptyRota end
+-- /ch show|hide, the option and the minimap button: show the bar only when it has buttons (Holy
+-- Paladin and classes without a module keep it hidden).
+function M.ApplyBarShown() if M.BarWanted() then KR:Show() else KR:Hide() end end
 
 -- Re-evaluate the rotation (talents, setting, profile). In combat the switch waits for PLAYER_REGEN_ENABLED.
 function M.ApplyRotaMode()
@@ -4247,6 +4252,7 @@ end
 -- here exists when they run; cfg/chr are M.cfg/M.chr (set in MH:OnInitialize and MH:ApplyProfile).
 M.L, M.L_EN, M.DEFAULTS, M.spells, M.KR, M.buttons, M.buffButtons = L, L_EN, defaults, spells, KR, buttons, buffButtons
 M.SpellName, M.SpellNames, M.ItemName, M.HasBuff, M.PlayerDebuffFull, M.UnitBuffByNamesOrIds = SpellName, SpellNames, ItemName, HasBuff, PlayerDebuffFull, UnitBuffByNamesOrIds
+M.ItemSlotReady = ItemSlotReady
 M.SpellReady, M.SpellCooldownRemaining, M.SpellUsableNow, M.PlayerMoving = SpellReady, SpellCooldownRemaining, SpellUsableNow, PlayerMoving
 M.CreateSpellButton, M.SetMacro, M.RebuildSpellMacros, M.ButtonSetState, M.MarkRecommended = CreateSpellButton, SetMacro, RebuildSpellMacros, ButtonSetState, MarkRecommended
 M.NoteRecommendation, M.FormatRemain, M.ColorText, M.UpdateBuffBar = NoteRecommendation, FormatRemain, ColorText, UpdateBuffBar
@@ -4557,7 +4563,7 @@ local function HandleSlash(msg)
     cmd = string.lower(cmd or "")
     if M.ClassCall("Slash", cmd, arg) then return end -- class module commands (e.g. /ch rota for Paladins)
     if not M.IsMage() and (M.MAGE_COMMANDS[cmd] or cmd:match("^tr..nengas$")) then print(L("ClassHelper: Nur für Magier.")); return end
-    if cmd == "show" then cfg.shown = true; KR:Show()
+    if cmd == "show" then cfg.shown = true; M.ApplyBarShown()
     elseif cmd == "hide" then cfg.shown = false; KR:Hide()
     elseif cmd == "lock" then cfg.locked = true; print(L("ClassHelper: Bar gesperrt"))
     elseif cmd == "unlock" then cfg.locked = false; print(L("ClassHelper: Bar verschiebbar"))
@@ -4795,9 +4801,10 @@ end
 -- Ace3: startup, settings (AceDB profiles), options window
 -- =============================
 
--- Settings from ClassHelper <= 2.3 were one flat per-character table. The update renamed it to
--- ClassHelperLegacyDB in each character's SavedVariables file; a flat ClassHelperDB (rename missed)
--- is recognised too. Copied once into this character's profile / char data, then dropped.
+-- Settings from MageHelper / KahuRota <= 2.3 were one flat per-character table. The v2.4 update
+-- renamed it to MageHelperLegacyDB in each character's SavedVariables file (ClassHelperLegacyDB
+-- after the manual file rename described in the README); a flat ClassHelperDB (rename missed) is
+-- recognised too. Copied once into this character's profile / char data, then dropped.
 local function TakeLegacySettings()
     local legacy = ClassHelperLegacyDB
     if type(ClassHelperDB) == "table" and ClassHelperDB.profiles == nil and ClassHelperDB.profileKeys == nil and ClassHelperDB.shown ~= nil then
@@ -4820,6 +4827,22 @@ local function ApplyLegacySettings(db, legacy)
     end
 end
 
+-- The old MageHelper folder still installed and enabled: both addons would run side by side.
+-- 3.3.5: GetAddOnInfo returns name, title, notes, enabled, loadable, reason, security.
+function M.WarnOldMageHelper()
+    local loaded = IsAddOnLoaded and IsAddOnLoaded("MageHelper")
+    local name, enabled
+    if GetAddOnInfo then
+        local n, _, _, e = GetAddOnInfo("MageHelper")
+        name, enabled = n, e
+    end
+    if loaded or (name and enabled) then
+        print(L("ClassHelper: Das alte Addon MageHelper ist noch installiert. Bitte den Ordner Interface\\AddOns\\MageHelper löschen, sonst laufen beide. Einstellungen übernehmen: siehe README, Abschnitt \"Coming from MageHelper\"."))
+        return true
+    end
+    return false
+end
+
 local optionsFrame
 
 local function SetupOptions(db)
@@ -4836,7 +4859,7 @@ local function SetupOptions(db)
         type = "group", name = "ClassHelper",
         args = {
             general = { type = "group", name = L("Allgemein"), order = 1, get = get, set = set, args = {
-                shown = toggle(L("Rota-Leiste anzeigen"), 1, function(_, v) cfg.shown = v; if v then KR:Show() else KR:Hide() end end),
+                shown = toggle(L("Rota-Leiste anzeigen"), 1, function(_, v) cfg.shown = v; M.ApplyBarShown() end),
                 locked = toggle(L("Rota-Leiste sperren"), 2),
                 buffBarShown = toggle(L("Buff-Leiste anzeigen"), 3, function(_, v)
                     cfg.buffBarShown = v
@@ -4999,6 +5022,7 @@ function MH:OnInitialize()
     M.cfg, M.chr = cfg, chr -- for the class modules
     ApplyLanguageSetting()
     M.ClassCall("Init")
+    M.WarnOldMageHelper()
     -- leftovers of the old leg-name swap (v3.0) and of the first T9 version (v3.1)
     chr.moltenStep, chr.moltenT9Legs, chr.moltenMainLegs, chr.moltenCastAt = nil, nil, nil, nil
     self.db.RegisterCallback(self, "OnProfileChanged", "ApplyProfile")
