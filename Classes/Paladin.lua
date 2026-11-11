@@ -264,10 +264,12 @@ function M.PalActiveSeal()
     end
 end
 
--- Righteous Fury wanted: PallyPower's opt.rf when used, else only in Protection.
+-- Righteous Fury wanted: always in Protection (owner's decision: PallyPower's rf defaults to false
+-- and most tanks never set it); in the other modes PallyPower's opt.rf when used, else not.
 function M.PalRFWanted()
+    if M.activeRota == "prot" then return true end
     if M.PalUsingPP() then return PallyPower.opt.rf == true end
-    return M.activeRota == "prot"
+    return false
 end
 function M.PalRFActive() return (M.PalHasAura(M.PAL_ID.rf)) end
 

@@ -65,6 +65,13 @@ local SPELLS = {
   [53385]={"G\195\182ttlicher Sturm","Divine Storm"}, [48801]={"Exorzismus","Exorcism"}, [48817]={"Heiliger Zorn","Holy Wrath"},
   [59578]={"Die Kunst des Krieges","The Art of War"}, [53489]={"Die Kunst des Krieges","The Art of War"},
   [53758]={"Fl\195\164schchen des Steinbluts","Flask of Stoneblood"}, [53760]={"Fl\195\164schchen des endlosen Zorns","Flask of Endless Rage"},
+  [66233]={"Unerm\195\188dlicher Verteidiger","Ardent Defender"},
+  -- boss mechanics for the Protection taunt/defensive rules (one rank each is enough for names)
+  [71204]={"Ber\195\188hrung der Bedeutungslosigkeit","Touch of Insignificance"}, [72410]={"Blutrune","Rune of Blood"},
+  [72219]={"Magenbl\195\164hung","Gastric Bloat"}, [72553]={"Magenbl\195\164hung","Gastric Bloat"},
+  [72451]={"Mutierte Seuche","Mutated Plague"}, [70127]={"Mystischer Puffer","Mystic Buffet"}, [72528]={"Mystischer Puffer","Mystic Buffet"},
+  [66331]={"Pf\195\164hlen","Impale"}, [67477]={"Pf\195\164hlen","Impale"}, [69409]={"Seelenernter","Soul Reaper"},
+  [72737]={"Raserei","Frenzy"}, [69166]={"Eingeatmete Seuche","Inhaled Blight"}, [66330]={"Wankendes Stampfen","Staggering Stomp"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -79,8 +86,13 @@ function GetItemIcon(id) return "Interface\\Icons\\item" .. id end
 function GetTime() return now end
 -- COOLDOWNS[spell name] / ITEM_COOLDOWNS[item ID] = seconds left (set by the test; GetTime() moves on)
 COOLDOWNS, ITEM_COOLDOWNS = {}, {}
-local function cd(left) if left and left > 0 then return now, left, 1 end return 0, 0, 1 end
-function GetSpellCooldown(name) return cd(COOLDOWNS[name]) end
+-- COOLDOWN_DURATION[spell name] = full cooldown (optional): then a short rest isn't mistaken for the GCD
+COOLDOWN_DURATION = {}
+local function cd(left, dur)
+  if left and left > 0 then dur = math.max(dur or left, left); return now - (dur - left), dur, 1 end
+  return 0, 0, 1
+end
+function GetSpellCooldown(name) return cd(COOLDOWNS[name], COOLDOWN_DURATION[name]) end
 function GetItemCooldown(id) return cd(ITEM_COOLDOWNS[id]) end
 -- KNOWN[spellId] = false makes a spell unknown (default: every spell is known)
 KNOWN = {}
@@ -151,6 +163,10 @@ ChatFrame1 = DEFAULT_CHAT_FRAME
 RAID = {}
 local function raidEntry(u)
   if u == "player" then return { name = "Kahuchan", class = PLAYER_CLASS or "MAGE" } end
+  -- the boss's target: TARGETTARGET / BOSSES.bossN.target = a RAID entry (or { name = "Kahuchan" } = me)
+  if u == "targettarget" then return TARGETTARGET end
+  local b = type(u) == "string" and u:match("^(boss%d)target$")
+  if b then return BOSSES[b] and BOSSES[b].target end
   local i = type(u) == "string" and tonumber(u:match("^raid(%d+)$"))
   if i then return RAID[i] end
 end
@@ -179,7 +195,13 @@ function UnitAura(unit, i, filter)
 end
 -- RANGE[unit] = 0 makes IsSpellInRange report out of range (default 1 for an existing unit)
 RANGE, USABLE = {}, {}
-function IsSpellInRange(spell, unit) if not UnitExists(unit) then return nil end return RANGE[unit] or 1 end
+-- SPELL_RANGE[spell name] = 0/1 overrides RANGE for that spell (melee vs. ranged abilities)
+SPELL_RANGE = {}
+function IsSpellInRange(spell, unit)
+  if not UnitExists(unit) then return nil end
+  if SPELL_RANGE[spell] ~= nil then return SPELL_RANGE[spell] end
+  return RANGE[unit] or 1
+end
 function IsUsableSpell(spell) if USABLE[spell] == false then return nil, 1 end return 1, nil end
 -- mana and target health for the Arcane rotation
 PLAYER_MANA, PLAYER_MANA_MAX, TARGET_HP = 30000, 30000, 100
@@ -189,6 +211,7 @@ function UnitPowerMax(u) if u == "player" then return PLAYER_MANA_MAX end return
 BOSSES = {}
 function UnitHealth(u)
   if u == "target" then return TARGET_HP end
+  if u == "player" and PLAYER_HP then return PLAYER_HP end
   if BOSSES[u] then return BOSSES[u].hp or 100 end
   if u == "focus" and FOCUS then return FOCUS.hp or 100 end
   return 100

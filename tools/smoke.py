@@ -1534,10 +1534,11 @@ FRAMES.ClassHelperBuff_pal_bless1.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_b
 FRAMES.ClassHelperBuff_pal_rf.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_rf)
 FRAMES.ClassHelperBuff_pal_hs.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_hs)
 -- empty recommendation: nothing glows, one-button idle
+local orig = M.PalProtReco
+M.PalProtReco = function() return nil end; upd()
 for _, b in pairs(M.buttons) do check(b.state ~= "glow" and b.state ~= "urgent", "no glow without a rotation") end
 check(FRAMES.ClassHelperOneButton.currentKey == nil, "one-button idle")
--- the rotation hook drives the glow (what the Prot agent fills in)
-local orig = M.PalProtReco
+-- the rotation hook drives the glow
 local seen
 M.PalProtReco = function(St) seen = St; return "hs", true, "Test" end
 upd()
@@ -1622,7 +1623,12 @@ local o = opts()
 check(o.args.paladin.args.palUsePallyPower.disabled() == false, "PallyPower option enabled when loaded")
 check(macro("seal"):find("/cast " .. S(21084), 1, true), "seal from PallyPower (Righteousness): " .. macro("seal"))
 check(B("pal_seal").__attr.spell == S(21084) and B("pal_aura").__attr.spell == S(19746), "buff bar: PallyPower seal and aura (Concentration): " .. tostring(B("pal_seal").__attr.spell) .. " " .. tostring(B("pal_aura").__attr.spell) .. " shown=" .. tostring(FRAMES.ClassHelperBuffBar.__shown))
-check(B("pal_rf").__attr.macrotext == "/cancelaura " .. S(25780), "PallyPower rf=false: RF not wanted even in Prot")
+check(B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "PallyPower rf=false: RF still wanted in Prot (owner's decision)")
+Slash("rota ret"); upd()
+check(B("pal_rf").__attr.macrotext == "/cancelaura " .. S(25780), "PallyPower rf=false in Ret: RF not wanted")
+PallyPower.opt.rf = true; upd(); check(B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "PallyPower rf=true in Ret: RF wanted")
+PallyPower.opt.rf = false; Slash("rota auto"); upd()
+check(M.activeRota == "prot", "back to Prot")
 local function blessIcon(i) return tostring(B("pal_bless" .. i).icon.__tex) end
 check(buffShown("pal_bless1") and buffShown("pal_bless2") and not buffShown("pal_bless3"), "two blessings assigned to me (paladin 'Gone' skipped)")
 check(blessIcon(1):find("spell25898", 1, true), "my greater Kings: " .. blessIcon(1))
@@ -1693,8 +1699,245 @@ check(#ERRORS == 0, "no Lua errors")
 OUT[#OUT + 1] = "OTHERCLASS OK"
 '''
 
+# Protection rotation, taunt and defensive slots (own Lua state). Helpers are globals so every part sees them.
+PROTCOMMON = r'''
+function npcGuid(id) return string.format("0xF1300%05X000001", id) end
+ME = { name = "Kahuchan", class = "PALADIN" }
+TANKY = { name = "Tanky", class = "WARRIOR" }
+function protBase()
+  INCOMBAT = true
+  AURAS.player = { { S(25780), 0, 0, 25780 }, { S(31801), 0, 0, 31801 }, { S(48952), 8, GetTime() + 9, 48952 }, { S(54428), 0, GetTime() + 15, 54428 } }
+  DEBUFFS.player = {}
+  COOLDOWNS, RANGE, USABLE, BOSSES = {}, {}, {}, {}
+  COOLDOWN_DURATION, SPELL_RANGE = {}, {}
+  for id, d in pairs({ [53408] = 8, [20271] = 8, [53595] = 6, [48819] = 8, [61411] = 6, [48952] = 8, [48827] = 30, [62124] = 8,
+                       [31789] = 8, [498] = 180, [48788] = 1200, [642] = 300, [54428] = 60, [48806] = 6 }) do COOLDOWN_DURATION[S(id)] = d end
+  TARGET_HP, PLAYER_HP, NOTARGET, INSTANCE = 100, nil, nil, nil
+  TARGETNAME, TARGETGUID, TARGETTARGET = "Training Dummy", nil, nil
+  RAID = { ME, TANKY }
+  M.lastCastAt = M.lastCastAt or {}
+  for k in pairs(M.lastCastAt) do M.lastCastAt[k] = nil end
+end
+function reco() upd(2); OUT[#OUT + 1] = "PROTNOTE " .. tostring(M.palReco) .. " " .. tostring(M.palNote); return M.palReco, M.palNote end
+function st(k) return M.buttons[k] and M.buttons[k].state end
+function cl(ev, dstGUID, dstName, spell, amount)
+  FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, ev, TARGETGUID or "GUID-boss", "Boss", 0xa48, dstGUID, dstName, 0x514, spell, S(spell) or "?", 1, "DEBUFF", amount)
+end
+function boss(npc, name, target) TARGETGUID, TARGETNAME, TARGETTARGET = npcGuid(npc), name, target end
+function endCombat() INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd() end
+'''
+
+# 969 priority, look-ahead, GCD, just-cast guard, AoE mode, seal/RF, pull, Hammer of Wrath, Plea.
+PROT = r'''
+upd()
+check(M.activeRota == "prot", "Prot at login")
+protBase(); INCOMBAT = false
+AURAS.player = {}
+local k, n = reco()
+check(k == "rf" and st("rf") == "glow", "out of combat, nothing up: Righteous Fury first (not urgent): " .. tostring(k))
+AURAS.player = { { S(25780), 0, 0, 25780 } }
+k, n = reco(); check(k == "seal", "RF up, no seal: seal: " .. tostring(k))
+AURAS.player = { { S(25780), 0, 0, 25780 }, { S(21084), 0, 0, 21084 } }
+k, n = reco(); check(k == "seal" and n:find(S(21084), 1, true), "wrong seal (Righteousness): seal, named: " .. tostring(n))
+Slash("aoe an"); k = reco(); check(k == "sealaoe", "AoE mode: Seal of Command button: " .. tostring(k)); Slash("aoe aus")
+AURAS.player = { { S(25780), 0, 0, 25780 }, { S(31801), 0, 0, 31801 } }
+k = reco(); check(k == "avs", "out of combat with a target: Avenger's Shield on the pull: " .. tostring(k))
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
+k = reco(); check(k == "hs", "in combat, Holy Shield missing: " .. tostring(k))
+protBase()
+k = reco(); check(k == "judge" and st("judge") == "glow", "969: Judgement first: " .. tostring(k))
+COOLDOWNS[S(53408)] = 5; k = reco(); check(k == "hotr", "Judgement on CD: Hammer of the Righteous: " .. tostring(k))
+COOLDOWNS[S(53595)] = 3; k = reco(); check(k == "cons", "then Consecration: " .. tostring(k))
+COOLDOWNS[S(48819)] = 4; k = reco(); check(k == "sor", "then Shield of Righteousness: " .. tostring(k))
+-- look-ahead: a higher one ready within 0.3 s keeps the glow (blue until clickable)
+COOLDOWNS[S(53408)] = 0.2; k = reco(); check(k == "judge" and st("judge") == "prep", "Judgement in 0.2 s: still Judgement, blue: " .. tostring(k) .. " " .. tostring(st("judge")))
+COOLDOWNS[S(53408)] = 0.5; k = reco(); check(k == "sor", "Judgement in 0.5 s: next ready one (SoR): " .. tostring(k))
+-- the GCD alone doesn't count as a cooldown
+COOLDOWNS, COOLDOWN_DURATION = { [S(53408)] = 1.5, [S(53595)] = 1.5 }, {}; k = reco(); check(k == "judge", "GCD ignored: " .. tostring(k))
+-- right after its cast the spell isn't recommended again (client shows only the GCD for a moment)
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", S(53408)); k = reco(); check(k == "hotr", "just cast Judgement: Hammer next: " .. tostring(k))
+protBase()
+-- judgement of Light by option
+INCOMBAT = false; Slash("richturteil licht"); INCOMBAT = true
+k, n = reco(); check(k == "judge" and n:find(S(20271), 1, true), "Judgement of Light in the note: " .. tostring(n))
+INCOMBAT = false; Slash("richturteil weisheit"); INCOMBAT = true
+-- everything of the 969 on cooldown: Hammer of Wrath <= 20 %, Avenger's Shield, Divine Plea, then the next one
+COOLDOWNS = { [S(53408)] = 5, [S(53595)] = 3, [S(48819)] = 6, [S(61411)] = 2.5 }
+TARGET_HP = 15; k = reco(); check(k == "how", "target at 15 %: Hammer of Wrath: " .. tostring(k))
+TARGET_HP = 100; k = reco(); check(k == "avs", "Avenger's Shield when ready: " .. tostring(k))
+COOLDOWNS[S(48827)] = 10; AURAS.player[4] = nil; k = reco(); check(k == "plea", "Divine Plea missing: " .. tostring(k))
+COOLDOWNS[S(54428)] = 50; k, n = reco(); check(k == "sor" and st("sor") == "prep", "nothing ready: the next one (SoR 2.5 s), blue: " .. tostring(k) .. " " .. tostring(st("sor")))
+-- not usable (e.g. mana) / out of range is skipped
+protBase(); USABLE[S(53408)] = false; k = reco(); check(k == "hotr", "Judgement not usable: skipped: " .. tostring(k))
+protBase(); RANGE.target = 0; COOLDOWNS[S(48827)] = 10; k = reco(); check(k ~= "hotr" and k ~= "sor" and k ~= "cons", "out of melee: no melee abilities: " .. tostring(k))
+protBase(); for _, id in ipairs({ 53408, 53595, 61411 }) do SPELL_RANGE[S(id)] = 0 end; k = reco(); check(k == "avs", "out of melee in combat: Avenger's Shield (pull): " .. tostring(k))
+-- AoE mode: Hammer and Consecration first
+protBase(); AURAS.player[2] = { S(20375), 0, 0, 20375 }
+Slash("aoe an"); k, n = reco(); check(k == "hotr", "AoE: Hammer first: " .. tostring(k))
+COOLDOWNS[S(53595)] = 4; k = reco(); check(k == "cons", "AoE: then Consecration: " .. tostring(k))
+Slash("aoe aus")
+-- no target: only buffs
+protBase(); NOTARGET = true; k = reco(); check(k == nil, "no target, buffs up: nothing: " .. tostring(k)); NOTARGET = nil
+endCombat()
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "PROT OK"
+'''
+
+# Taunt rules: Festergut stacks, me as the boss's target, HoR on cooldown -> RD, boss not targeted,
+# Saurfang Rune of Blood, Gormok heroic threshold, reset on combat end, options.
+TAUNT = r'''
+protBase(); FireEvent("PLAYER_REGEN_DISABLED")
+INSTANCE = { type = "raid", difficulty = 2, dynamic = 0 }
+boss(36626, "Fauldarm", TANKY)
+for i = 1, 5 do cl(i == 1 and "SPELL_AURA_APPLIED" or "SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, i > 1 and i or nil) end
+check(M.PalStacks("GUID-Tanky", "fester") == 5, "Gastric Bloat stacks tracked: " .. M.PalStacks("GUID-Tanky", "fester"))
+local k, n = reco(); check(k ~= "hor" and k ~= "rd", "5 stacks: no taunt yet: " .. tostring(k))
+cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, 6)
+k, n = reco(); check(k == "hor" and st("hor") == "urgent", "6 stacks on the other tank: Hand of Reckoning urgent: " .. tostring(k) .. " " .. tostring(st("hor")))
+check(n:find("Tanky", 1, true) and n:find("6", 1, true), "note names the tank and stacks: " .. tostring(n))
+-- my own stacks still up: no taunt
+DEBUFFS.player = { { S(72553), 3, GetTime() + 60, 72553 } }
+k = reco(); check(k ~= "hor" and k ~= "rd", "own Gastric Bloat still up: no taunt: " .. tostring(k))
+DEBUFFS.player = { { S(72553), 3, GetTime() + 1, 72553 } }
+k = reco(); check(k == "hor", "own stacks about to fall off: taunt: " .. tostring(k))
+DEBUFFS.player = {}
+-- I am the boss's target: never taunt
+TARGETTARGET = ME; k = reco(); check(k ~= "hor" and k ~= "rd", "boss targets me: no taunt: " .. tostring(k))
+TARGETTARGET = TANKY
+-- Hand of Reckoning on cooldown: Righteous Defense on the boss's target
+COOLDOWNS[S(62124)] = 5; k, n = reco(); check(k == "rd" and st("rd") == "urgent", "HoR on cooldown: Righteous Defense: " .. tostring(k))
+check(n:find(S(62124), 1, true), "RD note says HoR is not ready: " .. tostring(n))
+COOLDOWNS[S(31789)] = 6; k = reco(); check(k ~= "hor" and k ~= "rd", "both on longer cooldown: rotation: " .. tostring(k))
+COOLDOWNS[S(62124)] = 1.8; k = reco(); check(k == "hor" and st("hor") == "prep", "HoR in 1.8 s: shown blue: " .. tostring(k) .. " " .. tostring(st("hor")))
+COOLDOWNS = {}
+-- a taunt just cast: wait for the boss to turn
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", S(62124)); k = reco(); check(k ~= "hor" and k ~= "rd", "taunt just cast: no second one: " .. tostring(k))
+for p in pairs(M.lastCastAt) do M.lastCastAt[p] = nil end
+-- the boss isn't my target (boss1 only): no taunt button (the macros act on my target), hint in the note
+TARGETGUID, TARGETNAME, TARGETTARGET = npcGuid(37000), "Gasspore", nil
+BOSSES.boss1 = { name = "Fauldarm", guid = npcGuid(36626), target = TANKY }
+k, n = reco(); check(k ~= "hor" and k ~= "rd", "boss not targeted: no taunt button: " .. tostring(k))
+check(n and n:find(GetLocale() == "deDE" and "Boss ins Ziel" or "target the boss", 1, true), "hint to target the boss: " .. tostring(n))
+BOSSES = {}; boss(36626, "Fauldarm", TANKY)
+-- option: threshold 7
+MH.db.profile.palT_festerN = 7; k = reco(); check(k ~= "hor", "threshold 7: 6 stacks no taunt: " .. tostring(k))
+MH.db.profile.palT_festerN = 6; MH.db.profile.palT_fester = false; k = reco(); check(k ~= "hor", "rule off: no taunt")
+MH.db.profile.palT_fester = true; MH.db.profile.palTaunt = false; k = reco(); check(k ~= "hor", "taunt off: no taunt")
+MH.db.profile.palTaunt = true
+-- aura removed: stacks gone
+cl("SPELL_AURA_REMOVED", "GUID-Tanky", "Tanky", 72553)
+check(M.PalStacks("GUID-Tanky", "fester") == 0, "REMOVED clears the stacks")
+cl("SPELL_AURA_APPLIED", "GUID-Tanky", "Tanky", 72553); cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, 7)
+cl("SPELL_AURA_REMOVED_DOSE", "GUID-Tanky", "Tanky", 72553, 6)
+check(M.PalStacks("GUID-Tanky", "fester") == 6, "REMOVED_DOSE takes the amount")
+-- combat end resets the rules
+endCombat()
+check(M.PalStacks("GUID-Tanky", "fester") == 0, "combat end: stacks reset")
+-- Saurfang: Rune of Blood on the other tank -> taunt at once
+protBase(); FireEvent("PLAYER_REGEN_DISABLED")
+boss(37813, "Todesbringer Saurfang", TANKY)
+k = reco(); check(k ~= "hor", "Saurfang without rune: no taunt: " .. tostring(k))
+cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 72410)
+k, n = reco(); check(k == "hor" and st("hor") == "urgent", "SAURFANG: Rune of Blood on the other tank: taunt: " .. tostring(k))
+TARGETTARGET = ME; k = reco(); check(k ~= "hor", "SAURFANG: boss on me: no taunt")
+TARGETTARGET = TANKY; SetNow(GetTime() + 21); k = reco(); check(k ~= "hor", "SAURFANG: rune too old: no taunt: " .. tostring(k))
+-- boss change resets: Festergut stacks don't carry over
+cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 72553, 8)
+boss(34796, "Gormok der Pfähler", TANKY); reco()
+check(M.PalStacks("GUID-Tanky", "fester") == 0, "boss change: other rules reset")
+-- Gormok: 3 stacks normal, 2 heroic (also ICC-style dynamic heroic flag)
+INSTANCE = { type = "raid", difficulty = 2, dynamic = 0, isDynamic = false }
+cl("SPELL_AURA_APPLIED", "GUID-Tanky", "Tanky", 66331); cl("SPELL_AURA_APPLIED_DOSE", "GUID-Tanky", "Tanky", 66331, 2)
+k = reco(); check(k ~= "hor", "Gormok normal: 2 stacks no taunt: " .. tostring(k))
+INSTANCE.difficulty = 4; check(M.PalHeroic(), "difficulty 4 = heroic")
+k = reco(); check(k == "hor", "Gormok heroic: 2 stacks taunt: " .. tostring(k))
+INSTANCE = { type = "raid", difficulty = 2, dynamic = 1 }; check(M.PalHeroic(), "dynamic heroic flag (ICC) = heroic")
+INSTANCE = { type = "raid", difficulty = 2, dynamic = 0 }; check(not M.PalHeroic(), "25 normal")
+-- Lich King Soul Reaper: off by default, heroic only
+boss(36597, "Der Lichkönig", TANKY)
+cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 69409)
+k = reco(); check(k ~= "hor", "Soul Reaper rule off by default: " .. tostring(k))
+MH.db.profile.palT_lk = true; k = reco(); check(k ~= "hor", "Soul Reaper rule: not on normal")
+INSTANCE.dynamic = 1; k = reco(); check(k == "hor", "Soul Reaper rule on, heroic: taunt: " .. tostring(k))
+MH.db.profile.palT_lk = false
+endCombat()
+-- options: groups shown for paladins, valid, all texts translated
+local o = opts()
+check(o.args.paladinProtTaunt.hidden() == false and o.args.paladinProtDef.hidden() == false, "Prot option groups shown")
+for _, g in ipairs({ "paladinProtTaunt", "paladinProtDef" }) do
+  OUT[#OUT + 1] = "PROTOPT " .. o.args[g].name
+  for key, a in pairs(o.args[g].args) do
+    local nm = type(a.name) == "function" and a.name() or a.name
+    check(type(nm) == "string" and nm ~= "", "option name: " .. key)
+    OUT[#OUT + 1] = "PROTOPT " .. nm .. " | " .. tostring(a.desc or "")
+    if a.disabled then a.disabled() end
+  end
+end
+o.args.paladinProtTaunt.set({ "paladinProtTaunt", "palT_dwN" }, 4); check(MH.db.profile.palT_dwN == 4, "threshold option sets")
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "TAUNT OK"
+'''
+
+# Defensive slot: boss moments and health thresholds, Forbearance, cooldowns.
+DEFENSIVE = r'''
+protBase(); FireEvent("PLAYER_REGEN_DISABLED")
+boss(36597, "Der Lichkönig", ME)
+cl("SPELL_CAST_SUCCESS", "GUID-player", "Kahuchan", 69409)
+local k, n = reco(); check(k == "dprot" and st("dprot") == "urgent", "DEFENSIVE: Soul Reaper on me: Divine Protection: " .. tostring(k))
+check(n:find(S(69409), 1, true), "note names Soul Reaper: " .. tostring(n))
+DEBUFFS.player = { { S(25771), 0, GetTime() + 60, 25771 } }
+k = reco(); check(k ~= "dprot", "Forbearance: no Divine Protection: " .. tostring(k))
+DEBUFFS.player = {}; COOLDOWNS[S(498)] = 60; k = reco(); check(k ~= "dprot", "DP on cooldown: none: " .. tostring(k))
+COOLDOWNS = {}; AURAS.player[#AURAS.player + 1] = { S(498), 0, GetTime() + 10, 498 }
+k = reco(); check(k ~= "dprot", "DP already up: none: " .. tostring(k))
+protBase(); SetNow(GetTime() + 7); k = reco(); check(k ~= "dprot", "Soul Reaper moment over: " .. tostring(k))
+MH.db.profile.palD_reaper = false; cl("SPELL_CAST_SUCCESS", "GUID-player", "Kahuchan", 69409); k = reco()
+check(k ~= "dprot", "Soul Reaper toggle off"); MH.db.profile.palD_reaper = true
+SetNow(GetTime() + 7); cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 69409); k = reco(); check(k ~= "dprot", "Soul Reaper on the other tank: no DP for me")
+endCombat()
+-- Saurfang Frenzy while he attacks me
+protBase(); boss(37813, "Todesbringer Saurfang", ME)
+cl("SPELL_AURA_APPLIED", TARGETGUID, "Saurfang", 72737)
+k = reco(); check(k == "dprot", "Saurfang Frenzy, boss on me: DP: " .. tostring(k))
+TARGETTARGET = TANKY; k = reco(); check(k ~= "dprot", "Frenzy while the other tank tanks: no DP: " .. tostring(k))
+endCombat()
+-- Festergut: Pungent Blight cast, and expected after the 3rd inhale
+protBase(); boss(36626, "Fauldarm", ME)
+cl("SPELL_CAST_START", nil, nil, 69195)
+k = reco(); check(k == "dprot", "Pungent Blight cast: DP: " .. tostring(k))
+SetNow(GetTime() + 5); k = reco(); check(k ~= "dprot", "Pungent moment over")
+cl("SPELL_AURA_APPLIED_DOSE", TARGETGUID, "Fauldarm", 69166, 3)
+k = reco(); check(k ~= "dprot", "3rd inhale: not yet")
+SetNow(GetTime() + 32); k = reco(); check(k == "dprot", "about 33 s after the 3rd inhale: DP: " .. tostring(k))
+endCombat()
+-- Gormok Staggering Stomp, Sindragosa buffet stacks on me
+protBase(); boss(34796, "Gormok der Pfähler", ME)
+cl("SPELL_CAST_START", nil, nil, 66330); k = reco(); check(k == "dprot", "Gormok Stomp: DP: " .. tostring(k))
+endCombat()
+protBase(); boss(36853, "Sindragosa", ME)
+DEBUFFS.player = { { S(70127), 4, GetTime() + 8, 70127 } }; k = reco(); check(k ~= "dprot", "buffet 4 on me: no DP")
+DEBUFFS.player = { { S(70127), 5, GetTime() + 8, 70127 } }; k = reco(); check(k == "dprot", "buffet 5 on me: DP: " .. tostring(k))
+endCombat()
+-- health thresholds
+protBase()
+PLAYER_HP = 50; k = reco(); check(k ~= "dprot" and k ~= "loh", "50 % health: nothing defensive")
+PLAYER_HP = 30; k, n = reco(); check(k == "dprot" and st("dprot") == "urgent", "HP threshold 35 %: DP: " .. tostring(k))
+PLAYER_HP = 10; k = reco(); check(k == "loh" and st("loh") == "urgent", "HP 10 %: Lay on Hands: " .. tostring(k))
+COOLDOWNS[S(48788)] = 600; k = reco(); check(k == "dprot", "LoH on cooldown: DP: " .. tostring(k))
+MH.db.profile.palDefDS = true; PLAYER_HP = 8; k = reco(); check(k == "dshield", "Divine Shield option on, 8 %: bubble: " .. tostring(k))
+MH.db.profile.palDefDS = false
+DEBUFFS.player = { { S(25771), 0, GetTime() + 60, 25771 } }; k = reco(); check(k ~= "dprot" and k ~= "loh" and k ~= "dshield", "Forbearance: no DP/LoH/bubble: " .. tostring(k))
+DEBUFFS.player = {}; MH.db.profile.palDefHp = false; PLAYER_HP = 10; COOLDOWNS = {}; k = reco(); check(k ~= "loh" and k ~= "dprot", "thresholds off: nothing")
+MH.db.profile.palDefHp = true; INCOMBAT = false; k = reco(); check(k ~= "loh", "out of combat: no defensives")
+PLAYER_HP = nil
+endCombat()
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "DEFENSIVE OK"
+'''
+
 CLASS_RUNS = (
     ("PALADIN", "{ 5, 51, 15 }", (("paladin_login", PALADIN_LOGIN), ("pallypower", PALLYPOWER))),
+    ("PALADIN", "{ 5, 51, 15 }", (("prot", PROTCOMMON + PROT), ("taunt", PROTCOMMON + TAUNT), ("defensive", PROTCOMMON + DEFENSIVE))),
     ("PALADIN", "{ 5, 11, 55 }", (("retlogin", RETLOGIN),)),
     ("WARRIOR", "{ 5, 51, 15 }", (("otherclass", OTHERCLASS),)),
 )
@@ -1704,7 +1947,7 @@ GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|g
 version, files = toc_files()
 failed = False
 PREFIXES = ("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS",
-            "PALADIN_LOGIN", "PALLYPOWER", "RETLOGIN", "OTHERCLASS", "|cffff7d0aClassHelper v")
+            "PALADIN_LOGIN", "PALLYPOWER", "PROT OK", "TAUNT OK", "DEFENSIVE OK", "RETLOGIN", "OTHERCLASS", "|cffff7d0aClassHelper v")
 MAGE_PARTS = (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION), ("teargas", TEARGAS))
 
 
