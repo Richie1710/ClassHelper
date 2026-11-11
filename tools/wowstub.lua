@@ -200,7 +200,10 @@ end
 -- shapeshift form (death knight presence, druid form): PLAYER_FORM = spell ID of the active form
 function GetShapeshiftForm() return PLAYER_FORM and 1 or 0 end
 function GetShapeshiftFormInfo(i) if i == 1 and PLAYER_FORM then return "icon", GetSpellInfo(PLAYER_FORM), true, true end end
-function GetItemCount(id)
+-- ITEM_CHARGES[id] = charges reported with includeCharges (3rd argument), e.g. the Mana Sapphire's 3
+ITEM_CHARGES = {}
+function GetItemCount(id, includeBank, includeCharges)
+  if includeCharges and ITEM_CHARGES[id] then return ITEM_CHARGES[id] end
   local n = 0
   for _, items in pairs(BAGS) do for i = 1, 16 do if items[i] and itemId(items[i]) == id then n = n + 1 end end end
   return n
@@ -229,11 +232,17 @@ local function newObj(kind, name)
   end })
 end
 -- Like the client: protected frames (SecureActionButtonTemplate and every frame that holds one,
--- e.g. the main bar MageHelperFrame) can't be shown, hidden, moved, resized or get attributes in combat.
+-- e.g. the main bar MageHelperFrame) can't be shown, hidden, moved, resized, scaled, reparented or
+-- get attributes in combat.
 local function guard(self, what)
   if self.__protected and INCOMBAT then
     error("ADDON_ACTION_BLOCKED: " .. tostring(self.__name or self.__kind) .. ":" .. what .. "() in combat", 3)
   end
+end
+-- A frame becomes protected when a protected frame is parented to it (and so do its parents) or
+-- anchored to it.
+local function protect(f)
+  while type(f) == "table" and f ~= UIParent do f.__protected = true; f = f.__parent end
 end
 function FRAME_SetScript(self, k, f) self.__scripts[k] = f end
 function FRAME_GetScript(self, k) return self.__scripts[k] end
@@ -262,7 +271,16 @@ function FRAME_SetVertexColor(self, r, g, b, a) self.__vc = { r, g, b, a } end
 function FRAME_SetTextColor(self, r, g, b, a) self.__tc = { r, g, b, a } end
 function FRAME_GetTexture(self) return self.__tex end
 function FRAME_SetAttribute(self, k, v) guard(self, "SetAttribute"); self.__attr[k] = v end
-function FRAME_SetPoint(self, ...) guard(self, "SetPoint") end
+function FRAME_SetPoint(self, point, rel, ...)
+  guard(self, "SetPoint")
+  if type(rel) == "string" then rel = rawget(_G, rel) end
+  if self.__protected and type(rel) == "table" then protect(rel) end
+end
+function FRAME_SetAllPoints(self, rel)
+  guard(self, "SetAllPoints")
+  if type(rel) == "string" then rel = rawget(_G, rel) end
+  if self.__protected and type(rel) == "table" then protect(rel) end
+end
 function FRAME_ClearAllPoints(self) guard(self, "ClearAllPoints") end
 function FRAME_GetAttribute(self, k) return self.__attr[k] end
 function FRAME_GetPoint(self) return "CENTER", nil, "CENTER", 0, 0 end
@@ -275,12 +293,19 @@ function FRAME_UnregisterAllEvents(self) self.__events = {} end
 function FRAME_IsEventRegistered(self, e) return self.__events[e] and 1 or nil end
 function FRAME_IsVisible(self) return self.__shown end
 function FRAME_SetWidth(self, w) guard(self, "SetWidth"); self.__w = w end
-function FRAME_SetHeight(self, h) self.__h = h end
+function FRAME_SetHeight(self, h) guard(self, "SetHeight"); self.__h = h end
+function FRAME_SetScale(self, s) guard(self, "SetScale"); self.__scale = s end
+function FRAME_GetScale(self) return self.__scale or 1 end
 function FRAME_GetWidth(self) return self.__w or 100 end
 function FRAME_GetHeight(self) return self.__h or 20 end
 function FRAME_GetName(self) return self.__name end
 function FRAME_GetObjectType(self) return self.__kind end
-function FRAME_SetParent(self, p) self.__parent = p end
+function FRAME_SetParent(self, p)
+  guard(self, "SetParent")
+  if type(p) == "string" then p = rawget(_G, p) end
+  self.__parent = p
+  if self.__protected then protect(p) end
+end
 function FRAME_GetParent(self) return self.__parent end
 function FRAME_GetFrameLevel(self) return 1 end
 function FRAME_GetStringWidth(self) return #tostring(self.__text or "") * 6 end
@@ -288,10 +313,7 @@ FRAMES = {}
 function CreateFrame(kind, name, parent, template)
   local f = newObj(kind, name)
   f.__name = name; f.__parent = parent
-  if template and tostring(template):find("SecureActionButtonTemplate", 1, true) then
-    local p = f
-    while p and p ~= UIParent do p.__protected = true; p = p.__parent end
-  end
+  if template and tostring(template):find("SecureActionButtonTemplate", 1, true) then protect(f) end
   if name then _G[name] = f; FRAMES[name] = f end
   if template == "UICheckButtonTemplate" and name then _G[name .. "Text"] = newObj("FontString") end
   FRAMES[#FRAMES+1] = f

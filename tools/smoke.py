@@ -485,6 +485,22 @@ PLAYER_CLASS, PLAYER_TALENTS, PLAYER_FORM, AURAS.player = nil, nil, nil, {}
 OUT[#OUT + 1] = "FLASK OK"
 '''
 
+# T10 links not readable at login: the count cached as 0 is dropped once 5 s after login.
+T10LOGIN = r'''
+local function reco() return FRAMES.MageHelperOneButton.currentKey end
+PLAYER_TALENTS = { 57, 3, 11 }; FireEvent("PLAYER_TALENT_UPDATE")
+INCOMBAT, TARGETNAME, EQUIPPED = true, "Dummy", {}
+Tick(0.15); Tick(0.15)
+check(reco() == "pom", "login: no T10 pieces readable yet (" .. tostring(reco()) .. ")")
+EQUIPPED = { [1] = "|Hitem:51281|h[x]|h", [3] = "|Hitem:51155|h[x]|h", [5] = "|Hitem:50278|h[x]|h", [7] = "|Hitem:51282|h[x]|h" }
+for i = 1, 34 do Tick(0.15) end   -- links arrive without UNIT_INVENTORY_CHANGED; past the 5 s timer
+check(reco() == "mirror", "T10 recounted 5 s after login (" .. tostring(reco()) .. ")")
+INCOMBAT, TARGETNAME, EQUIPPED, PLAYER_TALENTS = false, nil, {}, nil
+FireEvent("UNIT_INVENTORY_CHANGED", "player"); FireEvent("PLAYER_TALENT_UPDATE"); Tick(0.15)
+check(FRAMES.MageHelperButton_lb.__shown, "back to Fire after the login check")
+OUT[#OUT + 1] = "T10LOGIN OK"
+'''
+
 # Arcane rotation: auto mode by talents, button set, cooldowns, gem/Evocation, Missile Barrage,
 # burn vs conserve (mana threshold and time-to-die estimate), movement, switching back to Fire.
 ARCANE = r'''
@@ -500,13 +516,16 @@ local function state(mana, stacks)
   PLAYER_MANA = mana
   DEBUFFS.player = stacks > 0 and { { S(36032), stacks, nil, 36032 } } or {}
 end
-local function drain(hpPerSec, seconds, o)   -- o: boss = boss1 %/s, mana = mana/s lost
-  o = o or {}
+local function drain(hpPerSec, seconds, o)   -- o: boss = boss1-4 %/s, mana = mana/s lost,
+  o = o or {}                                 -- gains = { { mana, every s }, ... } external mana
   local recos = {}
   for i = 1, seconds / 0.15 do
     TARGET_HP = TARGET_HP - hpPerSec * 0.15
-    if BOSSES.boss1 and o.boss then BOSSES.boss1.hp = BOSSES.boss1.hp - o.boss * 0.15 end
+    if o.boss then for _, b in pairs(BOSSES) do b.hp = b.hp - o.boss * 0.15 end end
     if o.mana then PLAYER_MANA = PLAYER_MANA - o.mana * 0.15 end
+    for _, g in ipairs(o.gains or {}) do
+      if i % math.floor(g[2] / 0.15 + 0.5) == 0 then PLAYER_MANA = math.min(PLAYER_MANA + g[1], PLAYER_MANA_MAX) end
+    end
     Tick(0.15)
     if recos[#recos] ~= reco() then recos[#recos + 1] = reco() end
   end
@@ -534,10 +553,17 @@ KNOWN[12472] = nil; FireEvent("PLAYER_TALENT_UPDATE")
 check(macro("ap"):find("/cast " .. IV, 1, true), "Icy Veins joins the AP macro once known")
 
 -- cooldowns as soon as ready (in combat with a target)
+local holder, anchor = CreateFrame("Frame", nil, UIParent), CreateFrame("Frame", nil, UIParent)
+local sec = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
+sec:SetParent(holder); sec:SetPoint("LEFT", anchor, "RIGHT")
 INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); state(30000, 0); upd()
 -- the stub blocks protected frames in combat like the client (every scenario must avoid it)
 check(not pcall(FRAMES.MageHelperButton_ab.Hide, FRAMES.MageHelperButton_ab), "stub: secure button Hide() blocked in combat")
 check(not pcall(KR.SetWidth, KR, 100), "stub: main bar SetWidth() blocked in combat")
+check(not pcall(KR.SetHeight, KR, 50), "stub: main bar SetHeight() blocked in combat")
+check(not pcall(KR.SetScale, KR, 1.2), "stub: main bar SetScale() blocked in combat")
+check(not pcall(holder.Hide, holder), "stub: a frame a secure button was parented to later is protected")
+check(not pcall(anchor.SetPoint, anchor, "CENTER"), "stub: a frame a secure button is anchored to is protected")
 check(reco() == "pom", "Presence of Mind first: " .. tostring(reco()))
 COOLDOWNS[POM] = 100; upd(); check(reco() == "ap", "then Arcane Power")
 COOLDOWNS[AP] = 100; upd(); check(reco() == "ap", "AP on CD, Icy Veins ready: AP button (macro casts both)")
@@ -547,6 +573,11 @@ COOLDOWNS[MI] = 1.2; upd()   -- only the GCD runs on Mirror Image
 check(reco() == "mirror", "Mirror Image stays recommended during the GCD: " .. tostring(reco()))
 check(btnState("mirror") == "prep", "... but the button is not shown as clickable during the GCD")
 COOLDOWNS[MI] = nil
+-- right after the cast the client briefly reports only the GCD: no re-recommendation
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MI); COOLDOWNS[MI] = 1.4; upd(3)
+check(reco() ~= "mirror", "Mirror Image not re-recommended right after its cast (" .. tostring(reco()) .. ")")
+COOLDOWNS[MI] = 180; upd(); check(reco() ~= "mirror", "Mirror Image on its real cooldown")
+COOLDOWNS[MI] = nil; upd(); check(reco() == "mirror", "Mirror Image again once ready")
 COOLDOWNS[POM], COOLDOWNS[AP] = nil, nil
 EQUIPPED = { [1] = "|Hitem:51281|h[x]|h", [3] = "|Hitem:51155|h[x]|h", [5] = "|Hitem:50278|h[x]|h", [7] = "|Hitem:51282|h[x]|h" }
 upd(); check(reco() == "pom", "T10 count is cached until UNIT_INVENTORY_CHANGED")
@@ -587,6 +618,8 @@ AURAS.player = {}; state(9900, 3); upd(); check(reco() == "am", "burst buff gone
 ITEM_COOLDOWNS[33312] = nil
 state(27000, 0); upd(); check(reco() == "ab", "3000 missing: no gem yet")
 state(26000, 0); upd(); check(reco() == "gem", "4000 missing: Mana Gem")
+ITEM_CHARGES[33312] = 0; upd(); check(reco() ~= "gem", "gem with 0 charges left: not recommended (" .. tostring(reco()) .. ")")
+ITEM_CHARGES[33312] = nil
 ITEM_COOLDOWNS[33312] = 60; COOLDOWNS[EVO] = nil
 state(6000, 2); upd(); check(reco() == "abarr", "20% with stacks: drop them with Arcane Barrage first")
 state(6000, 0); upd(); check(reco() == "evo", "20% without stacks: Evocation")
@@ -607,6 +640,17 @@ check(reco() ~= "abarr" and not KR.info.__text:find("999", 1, true), "moving wit
 COOLDOWNS[FB] = nil; upd(); check(reco() == "fb_move", "moving without Arcane Barrage: Fire Blast")
 KNOWN[44781], COOLDOWNS[BARR], NOTARGET = nil, nil, true; COOLDOWNS[FB] = 5; upd()
 check(reco() ~= "abarr", "moving without a target: no Arcane Barrage (" .. tostring(reco()) .. ")")
+-- moving without any instant: no cast at all (never Evocation, Missiles or Blast), only a hint
+KNOWN[44781], NOTARGET, COOLDOWNS[EVO] = false, nil, nil
+AURAS.player = { { S(44401), 0, nil, 44401 } }; state(6000, 0); upd()
+check(reco() == nil and FRAMES.MageHelperOneButton.dynamicMacroText == nil, "moving without instants: no cast recommendation (" .. tostring(reco()) .. ")")
+check(btnState("evo") == "normal" and btnState("am") == "normal" and btnState("ab") == "normal", "moving without instants: no cast button lit")
+check(KR.info.__text:find(de and "Bewegung" or "Moving", 1, true), "moving without instants: move hint (" .. KR.info.__text .. ")")
+AURAS.player = { { S(12043), 0, nil, 12043 } }; upd()
+check(reco() == "ab", "moving with Presence of Mind up: instant Arcane Blast (" .. tostring(reco()) .. ")")
+AURAS.player, KNOWN[44781], COOLDOWNS[EVO] = {}, nil, 100
+MOVING = false; state(20000, 0); upd()
+check(reco() == "ab" and FRAMES.MageHelperOneButton.dynamicMacroText ~= nil, "standing again: one-button back")
 MOVING, COOLDOWNS[FB], NOTARGET = false, nil, nil
 OUT[#OUT + 1] = "ARCANE INFO " .. KR.info.__text
 
@@ -616,6 +660,8 @@ Slash("report")
 local report = table.concat(OUT, "\n", mark + 1)
 check(report:find(de and "keine Feuerball-Wertung" or "no Fireball rating", 1, true), "Arcane fight report: " .. report)
 check(not report:find("FB/min", 1, true) and not report:find(de and "Feuerbälle/min" or "Fireballs/min", 1, true), "Arcane fight report has no Fireball rating")
+check(not report:find("LB", 1, true) and not report:find("Combustion", 1, true), "Arcane fight report has no Fire LB/Combustion line")
+check(report:find(de and "Spiegelbilder" or "Mirror Images", 1, true), "Arcane fight report: Mirror Image/Ice Block line")
 
 -- burn auto (owner's rule): burst buff, or mana >= threshold, or a reliable estimate says the
 -- mana lasts until the boss dies. Every case starts a fresh fight (the drain is measured per fight).
@@ -669,6 +715,38 @@ drain(0.1, 6, { mana = 2000 })
 rate = tonumber(debug():match("(%d+) [Mm]ana/s"))
 check(rate and rate < 650, "Arcane Power time is not measured: " .. debug())
 AURAS.player = {}
+-- external mana (Mana Tide ~1800 every 3 s, Hymn of Hope ~900 every 2 s) during the burn: gains
+-- are not negative drain, so below the threshold the mana doesn't "last forever" (burn until OOM)
+local MEASURED = de and "gemessen" or "measured"
+newFight(); TARGETNAME, TARGET_HP = "Tide boss", 100; state(15000, 0); upd(2)
+drain(0.1, 24, { mana = 300, gains = { { 1800, 3 }, { 900, 2 } } })
+rate = tonumber(debug():match("(%d+) [Mm]ana/s"))
+check(debug():find(MEASURED, 1, true) and rate and rate > 250, "Mana Tide/Hymn during the burn: drain stays ~300 mana/s: " .. debug())
+state(9000, 3); drain(0.1, 3)
+check(reco() == "am", "below the threshold after Mana Tide/Hymn: conserve, no burn until OOM (" .. debug() .. ")")
+-- a measured drain far below the model is floored at half the gross model (~107 mana/s)
+newFight(); TARGETNAME, TARGET_HP = "Floor boss", 100; state(30000, 0); upd(2)
+drain(0.1, 24, { mana = 20 })
+rate = tonumber(debug():match("(%d+) [Mm]ana/s"))
+check(debug():find(MEASURED, 1, true) and rate and rate >= 100, "measured drain floored at half the model: " .. debug())
+
+-- Blood Prince Council: switching the target among boss1-3 keeps the samples and the decision
+newFight(); BOSSES = { boss1 = { name = "Valanar", hp = 60 }, boss2 = { name = "Keleseth", hp = 60 }, boss3 = { name = "Taldaram", hp = 60 } }
+TARGETNAME, TARGET_HP = "Valanar", 60; state(9000, 3); upd(2)
+drain(1, 8, { boss = 1 })   -- shared health, ~50 s to live, the mana lasts ~80 s
+check(reco() == "ab" and debug():find("TTD", 1, true), "Council: burn on the estimate (" .. debug() .. ")")
+TARGETNAME = "Keleseth"; local changes = drain(1, 4, { boss = 1 })
+check(changes == 0 and reco() == "ab" and debug():find("TTD", 1, true), "target swap boss1 -> boss2: estimate and decision kept (" .. changes .. ", " .. debug() .. ")")
+drain(0, 4)   -- invulnerable phase: the estimate becomes unreliable, the decision holds
+TARGETNAME = "Taldaram"; changes = drain(0, 4)
+check(changes == 0 and reco() == "ab" and debug():find(UNSURE, 1, true), "target swap during the hold: still burning (" .. changes .. ", " .. debug() .. ")")
+-- no boss units: a different target doesn't inherit the held decision of the old one
+BOSSES = {}
+newFight(); TARGETNAME, TARGET_HP = "Trash A", 60; state(9000, 3); upd(2)
+drain(5, 6)
+check(reco() == "ab", "trash A: burn on the estimate (" .. debug() .. ")")
+TARGETNAME, TARGET_HP = "Trash B", 100; drain(0, 2)
+check(reco() == "am", "new trash target without data: the mana rule, not trash A's decision (" .. debug() .. ")")
 
 -- boss units: the estimate follows boss1, not the add in the target; Evocation is never skipped
 -- because of an add
@@ -736,14 +814,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE)):
+        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)

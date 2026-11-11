@@ -331,6 +331,10 @@ local L_EN = {
     ["%s aktiv: %s"] = "%s up: %s",
     ["Bewegung: %s"] = "Moving: %s",
     ["Bewegung: %s CD %.1fs"] = "Moving: %s CD %.1fs",
+    ["Bewegung: kein Spontanzauber bereit"] = "Moving: no instant ready",
+    ["Bewegung"] = "Moving",
+    ["Bewegung: %s aktiv, %s"] = "Moving: %s up, %s",
+    ["Spiegelbilder: %d  Eisblock: %d"] = "Mirror Images: %d  Ice Block: %d",
     ["Burn: %s"] = "Burn: %s",
     ["Sparen: %s bis 3 Stapel"] = "Conserve: %s up to 3 stacks",
     ["Sparen: 3 Stapel, dann %s"] = "Conserve: 3 stacks, then %s",
@@ -551,7 +555,7 @@ local function PrintFightReport(force)
     print(L("|cffff7d0aMageHelper Fight-Report|r"))
     if M.activeRota == "arcane" then -- Fireballs and their rating mean nothing in the Arcane rotation
         print(string.format(L("Dauer: %.0fs  Arkan-Rota: keine Feuerball-Wertung"), dur))
-        print(string.format(L("LB-Casts: %d  Combustion: %d  Spiegelbilder: %d  Eisblock: %d"), fightStats.lbs or 0, fightStats.combs or 0, fightStats.mirrors or 0, fightStats.iceblocks or 0))
+        print(string.format(L("Spiegelbilder: %d  Eisblock: %d"), fightStats.mirrors or 0, fightStats.iceblocks or 0))
         if next(fightStats.reason or {}) then print(L("Häufigste Empfehlungen/Gründe:")); PrintTopReasons() end
         return
     end
@@ -2706,11 +2710,18 @@ M.AM_MB_TIME = 2.5
 M.GCD_MAX = 1.5               -- a running cooldown this short is only the global cooldown
 M.GEM_CD = 120
 M.EVO_CD_DEFAULT = 240        -- Evocation cooldown without Arcane Flows; the real one is read when seen
--- Measured drain (SimC choose_rotation style): net mana lost per second while burning, without
--- Arcane Power/Heroism/Icy Veins (they would distort it), Evocation channels and single jumps of
--- DRAIN_JUMP or more (gem, potion). Replaces the model after DRAIN_MIN_TIME s of burning, reset
--- per fight (raid buffs such as Replenishment differ), and only the last DRAIN_WINDOW s count.
-M.DRAIN_MIN_TIME, M.DRAIN_WINDOW, M.DRAIN_JUMP = 20, 120, 2500
+-- Measured drain (SimC choose_rotation style): mana spent per second while burning, without
+-- Arcane Power/Heroism/Icy Veins (they would distort it), Evocation channels and single drops of
+-- DRAIN_JUMP or more. Only decreases count: any gain (Mana Tide, Hymn of Hope, Arcane Torrent,
+-- Replenishment, gem, potion) is ignored, the client's in-combat regen (GetManaRegen) is subtracted
+-- instead, and the result never goes below DRAIN_FLOOR x the gross model drain (so a burst of
+-- external mana can't make the mana "last forever"). Replaces the model after DRAIN_MIN_TIME s of
+-- burning, reset per fight (raid buffs differ), and only the last DRAIN_WINDOW s count.
+M.DRAIN_MIN_TIME, M.DRAIN_WINDOW, M.DRAIN_JUMP, M.DRAIN_FLOOR = 20, 120, 2500, 0.5
+M.JUST_CAST = 1.5             -- a cooldown spell isn't recommended again this long after its cast
+M.POM_IDS = { [12043] = true }
+M.POM_NAMES = SpellNames(12043, "Geistesgegenwart", "Presence of Mind")
+M.lastCastAt = {}             -- spell name -> GetTime() of the player's last UNIT_SPELLCAST_SUCCEEDED
 M.BURN_HOLD = 15              -- an unreliable estimate keeps the last estimate decision this long
 -- Always burn while one of these is up: Arcane Power, Heroism, Bloodlust, T10 4-piece "Quad Core"
 -- (70747, +18% damage for 30 s after Mirror Image). Icy Veins only pauses the drain measurement.
@@ -2734,9 +2745,15 @@ M.ROTA_SETS = {
     fire = { "lb", "pyro", "fireball", "comb", "cd", "fb_move", "ice", "invis", "stop" },
     arcane = { "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop" },
 }
-M.ttdSamples, M.ttdGuid, M.ttdLastAt, M.ttdBoss = {}, nil, -10, false
+-- Health samples per GUID (boss1-4 and the target, every TTD_STEP s), so switching between boss
+-- units (Blood Prince Council, Twin Val'kyr) or back to an earlier target keeps its history.
+-- M.ttdSamples is the list of the current estimate unit. TTD_MAX_UNITS caps the table.
+M.ttdByGuid, M.ttdSamples, M.ttdGuid, M.ttdLastAt, M.ttdBoss = {}, {}, nil, -10, false
+M.TTD_MAX_UNITS = 8
 M.burn, M.burnAt, M.burnWhy = nil, -10, ""
-M.ttdBurn, M.ttdBurnAt = nil, -100 -- last decision of the estimate rule, kept while unreliable
+-- last decision of the estimate rule, kept while unreliable: for any boss unit when it was made on
+-- one, else only for the same GUID (a plain target swap doesn't inherit it)
+M.ttdBurn, M.ttdBurnAt, M.ttdBurnGuid, M.ttdBurnBoss = nil, -100, nil, false
 M.drain = { t = 0, loss = 0 }
 M.arcane = {}
 
@@ -2828,11 +2845,14 @@ end
 -- Ready for the recommendation = known and off cooldown. A running cooldown no longer than the GCD
 -- is only the global cooldown and counts as ready, so on-GCD spells (Mirror Image, Evocation) don't
 -- flicker; the button itself still shows "not yet" until it is clickable (ButtonUsableNow).
--- "enabled == 0" (the cooldown starts when the aura fades) is not ready.
+-- "enabled == 0" (the cooldown starts when the aura fades) is not ready. Right after its own cast
+-- (M.JUST_CAST s) a spell is not ready either: the client briefly reports only the GCD then.
 function M.KnownReady(key)
     if not M.KnowsSpell(M.SPELL_ID[key]) then return false, 999 end
     local start, duration, enabled = GetSpellCooldown(spells[key])
     if not start or enabled == 0 then return false, 999 end
+    local since = GetTime() - (M.lastCastAt[spells[key]] or -100)
+    if since < M.JUST_CAST then return false, M.JUST_CAST - since end
     if start == 0 or duration == 0 or duration <= M.GCD_MAX then return true, 0 end
     local remain = start + duration - GetTime()
     return remain <= 0, math.max(remain, 0)
@@ -2865,22 +2885,60 @@ function M.TtdUnit(targetOK)
     return targetOK and "target" or nil, false
 end
 
--- Sample the estimate unit's health; a new unit, a heal or a phase reset (health going up) start over.
+-- Add one health sample of a unit to its GUID's list; a heal or a phase reset (health going up)
+-- starts that list over.
+function M.SampleUnit(unit, now)
+    local guid = UnitGUID(unit)
+    local maxHp = UnitHealthMax(unit) or 0
+    if not guid or maxHp <= 0 then return end
+    local s = M.ttdByGuid[guid]
+    if not s then s = {}; M.ttdByGuid[guid] = s end
+    if s.at == now then return end -- the same unit under two tokens (boss1 and target)
+    local f = (UnitHealth(unit) or 0) / maxHp
+    if s[#s] and f > s[#s].f + 0.01 then for i = #s, 1, -1 do s[i] = nil end end
+    s[#s + 1] = { t = now, f = f }
+    s.at = now
+    while s[1] and now - s[1].t > M.TTD_WINDOW do table.remove(s, 1) end
+end
+
+-- Sample boss1-4 and the target every TTD_STEP s (per GUID) and point M.ttdSamples at the estimate
+-- unit's list. Lists not sampled for TTD_WINDOW s are dropped, at most TTD_MAX_UNITS are kept.
 function M.SampleTargetHealth(now, targetOK)
     local unit, isBoss = M.TtdUnit(targetOK)
     M.ttdBoss = isBoss
     M.ttdNoBoss = unit == nil and UnitExists("boss1")
-    local guid = unit and UnitGUID(unit)
-    if guid ~= M.ttdGuid then wipe(M.ttdSamples); M.ttdGuid = guid; M.ttdLastAt = -10; M.ttdBurn = nil end
-    if not unit or now - M.ttdLastAt < M.TTD_STEP then return end
-    local maxHp = UnitHealthMax(unit) or 0
-    if maxHp <= 0 then return end
-    local s = M.ttdSamples
-    local f = (UnitHealth(unit) or 0) / maxHp
-    if s[#s] and f > s[#s].f + 0.01 then wipe(s) end
-    s[#s + 1] = { t = now, f = f }
-    M.ttdLastAt = now
-    while s[1] and now - s[1].t > M.TTD_WINDOW do table.remove(s, 1) end
+    M.ttdGuid = unit and UnitGUID(unit)
+    if now - M.ttdLastAt >= M.TTD_STEP then
+        M.ttdLastAt = now
+        for i = 1, 4 do
+            local u = "boss" .. i
+            if UnitExists(u) and UnitCanAttack("player", u) and not UnitIsDead(u) then M.SampleUnit(u, now) end
+        end
+        if targetOK then M.SampleUnit("target", now) end
+        local n, oldest, oldestAt = 0, nil, math.huge
+        for guid, s in pairs(M.ttdByGuid) do
+            if now - (s.at or 0) > M.TTD_WINDOW then M.ttdByGuid[guid] = nil
+            else
+                n = n + 1
+                if s.at < oldestAt and guid ~= M.ttdGuid then oldest, oldestAt = guid, s.at end
+            end
+        end
+        if n > M.TTD_MAX_UNITS and oldest then M.ttdByGuid[oldest] = nil end
+    end
+    M.ttdSamples = (M.ttdGuid and M.ttdByGuid[M.ttdGuid]) or {}
+end
+
+-- New fight or changed burn options: decide burn/conserve again, drop the held estimate decision.
+function M.ResetBurnState()
+    M.burn, M.burnAt = nil, -10
+    M.ttdBurn, M.ttdBurnAt, M.ttdBurnGuid, M.ttdBurnBoss = nil, -100, nil, false
+end
+
+-- The held estimate decision applies to the current unit: any boss unit when it was made on one,
+-- else the same GUID only.
+function M.HoldApplies(now)
+    if M.ttdBurn == nil or now - M.ttdBurnAt > M.BURN_HOLD then return false end
+    return (M.ttdBurnBoss and M.ttdBoss) or (M.ttdGuid ~= nil and M.ttdGuid == M.ttdBurnGuid)
 end
 
 -- Seconds until the sampled unit dies (least-squares slope of the health fraction), or nil and a
@@ -2906,10 +2964,16 @@ function M.TimeToDie()
     return s[n].f / rate
 end
 
--- Modelled burn drain in mana/s (see M.MB_CHANCE): unbuffed Arcane Blast cost and cast time
--- (cached by M.ArcaneState only without Arcane Power/Heroism/Icy Veins), minus the in-combat regen
--- the client reports (GetManaRegen, if the API exists).
-function M.ModelBurnDrain()
+-- In-combat mana regen the client reports (GetManaRegen's casting value, if the API exists).
+function M.CombatRegen()
+    if not GetManaRegen then return 0 end
+    local _, casting = GetManaRegen()
+    return casting or 0
+end
+
+-- Gross modelled burn drain in mana/s (see M.MB_CHANCE): unbuffed Arcane Blast cost and cast time
+-- (cached by M.ArcaneState only without Arcane Power/Heroism/Icy Veins).
+function M.ModelBurnCost()
     local base = M.abBaseCost or M.AB_BASE_COST_FALLBACK
     local cast = M.abCast or 2.5
     local cost, p, casts = 0, 1, 0
@@ -2918,30 +2982,32 @@ function M.ModelBurnDrain()
         casts = casts + p
         p = p * (1 - M.MB_CHANCE)
     end
-    local regen = 0
-    if GetManaRegen then local _, casting = GetManaRegen(); regen = casting or 0 end
-    return cost / (casts * cast + M.AM_MB_TIME) - regen
+    return cost / (casts * cast + M.AM_MB_TIME)
 end
 
--- Net burn drain in mana/s: measured once DRAIN_MIN_TIME s of burning were seen, else the model.
+-- Net modelled burn drain: the gross model minus the in-combat regen.
+function M.ModelBurnDrain() return M.ModelBurnCost() - M.CombatRegen() end
+
+-- Net burn drain in mana/s: measured once DRAIN_MIN_TIME s of burning were seen (mana spent minus
+-- the in-combat regen), else the model; never below DRAIN_FLOOR x the gross model.
 function M.BurnDrain()
     local d = M.drain
-    if d.t >= M.DRAIN_MIN_TIME then return d.loss / d.t, true end
-    return M.ModelBurnDrain(), false
+    local floor = M.DRAIN_FLOOR * M.ModelBurnCost()
+    if d.t >= M.DRAIN_MIN_TIME then return math.max(d.loss / d.t - M.CombatRegen(), floor), true end
+    return math.max(M.ModelBurnDrain(), floor), false
 end
 
--- Measure the net drain while burning (see M.DRAIN_MIN_TIME).
+-- Measure the mana spent while burning (see M.DRAIN_MIN_TIME): decreases only, gains are ignored.
 function M.TrackDrain(now, A)
     local d = M.drain
     local ok = A.inCombat and M.burn and not A.forceBurn and not A.ivUp and not A.evoChannel
     if ok and d.last and now - d.lastAt < 1 then
         local delta = d.last - A.mana
-        if math.abs(delta) < M.DRAIN_JUMP then
-            d.loss, d.t = d.loss + delta, d.t + (now - d.lastAt)
-            if d.t > M.DRAIN_WINDOW then
-                local f = M.DRAIN_WINDOW / d.t
-                d.loss, d.t = d.loss * f, d.t * f
-            end
+        d.t = d.t + (now - d.lastAt)
+        if delta > 0 and delta < M.DRAIN_JUMP then d.loss = d.loss + delta end
+        if d.t > M.DRAIN_WINDOW then
+            local f = M.DRAIN_WINDOW / d.t
+            d.loss, d.t = d.loss * f, d.t * f
         end
     end
     if ok then d.last, d.lastAt = A.mana, now else d.last = nil end
@@ -2949,9 +3015,13 @@ end
 
 function M.ResetDrain() M.drain = { t = 0, loss = 0 } end
 
+-- Mana Gem charges left (the Mana Sapphire has 3; GetItemCount's 3rd argument counts charges).
+function M.GemCharges() return GetItemCount(M.MANA_GEM_ITEM, nil, true) or 0 end
+
 -- Mana Gem and Evocation spread over their cooldowns (mana/s), like SimC: Evocation's real cooldown
 -- (GetSpellBaseCooldown where it exists, else the last full cooldown seen; Arcane Flows makes it 2 min).
-function M.RestoreRates(A)
+-- The gem counts only with charges left, and at most its remaining charges over ttd s.
+function M.RestoreRates(A, ttd)
     local evoCd = M.EVO_CD_DEFAULT
     if GetSpellBaseCooldown then
         local ms = GetSpellBaseCooldown(M.SPELL_ID.evo)
@@ -2960,7 +3030,9 @@ function M.RestoreRates(A)
         evoCd = M.evoCdSeen
     end
     local evo = A.evoKnown and M.EVO_SHARE * A.maxMana / evoCd or 0
-    local gem = GetItemCount(M.MANA_GEM_ITEM) > 0 and M.MANA_GEM_YIELD / M.GEM_CD or 0
+    local charges = M.GemCharges()
+    local gem = charges > 0 and M.MANA_GEM_YIELD / M.GEM_CD or 0
+    if ttd and ttd > 0 then gem = math.min(gem, charges * M.MANA_GEM_YIELD / ttd) end
     return gem, evo
 end
 
@@ -2998,17 +3070,16 @@ function M.UpdateBurn(now, A)
         ttd, why = M.TimeToDie()
         if ttd then
             local drain, measured = M.BurnDrain()
-            local gemRate, evoRate = M.RestoreRates(A)
+            local gemRate, evoRate = M.RestoreRates(A, ttd)
             A.ttd, A.drain, A.measured = ttd, drain, measured
             A.oom = M.ManaLasts(A.mana, drain - gemRate - evoRate)
             A.oomNoEvo = M.ManaLasts(A.mana, drain - gemRate)
             local margin = M.burn and (1 - M.BURN_HYST) or (1 + M.BURN_HYST)
             M.ttdBurn, M.ttdBurnAt = A.oom >= ttd * margin, now
+            M.ttdBurnGuid, M.ttdBurnBoss = M.ttdGuid, M.ttdBoss
             est = M.ttdBurn
-        elseif M.ttdBurn ~= nil and now - M.ttdBurnAt <= M.BURN_HOLD then
+        elseif M.HoldApplies(now) then
             est = M.ttdBurn -- unreliable (shield, phase change, immune): keep the last decision a while
-        else
-            M.ttdBurn = nil
         end
     end
     local rule
@@ -3057,7 +3128,8 @@ function M.ArcaneState(now, targetOK)
     A.evoReady, A.evoCD = M.KnownReady("evo")
     local _, evoDur = GetSpellCooldown(spells.evo)
     if evoDur and evoDur > M.GCD_MAX then M.evoCdSeen = evoDur end
-    A.gemReady = GetItemCount(M.MANA_GEM_ITEM) > 0 and M.ItemCooldownRemaining(M.MANA_GEM_ITEM) <= 0
+    A.gemReady = M.GemCharges() > 0 and M.ItemCooldownRemaining(M.MANA_GEM_ITEM) <= 0
+    A.pomUp = HasBuff("player", M.POM_NAMES, M.POM_IDS)
     A.abarrKnown = M.KnowsSpell(M.SPELL_ID.abarr)
     A.abarrUsable = targetOK and A.abarrKnown and SpellUsableNow(spells.abarr)
     A.abarrCD = A.abarrKnown and SpellCooldownRemaining(spells.abarr) or 999
@@ -3075,9 +3147,10 @@ end
 --    and AP share a cooldown category, so PoM goes first), Mirror Image last without T10.
 --    A cooldown that only shows the GCD counts as ready (M.KnownReady), so nothing flickers.
 -- 2) Mana Gem (in combat) when the missing mana >= the gem's yield.
--- 3) Moving: Arcane Barrage (known, target), then Fire Blast, then Arcane Barrage's cooldown;
---    without either no move hint (placed above the casts and channels below, which can't be used
---    while moving; it only replaces them).
+-- 3) Moving: only instants. Arcane Blast while Presence of Mind is up (makes it instant), Arcane
+--    Barrage (known, target), then Fire Blast, then Arcane Barrage's cooldown; otherwise no cast at
+--    all (nil key, only a "Bewegung" hint): never Evocation, Arcane Missiles or Arcane Blast.
+--    The cooldowns and the gem above are off the GCD or instant and stay.
 -- 4) Evocation (in combat) below 30% mana without Arcane Blast stacks (with stacks: Arcane
 --    Barrage/Missiles first to drop them). Skipped only while a reliable estimate of a boss unit
 --    (never an add or a plain target) says the mana lasts to the kill without it.
@@ -3099,12 +3172,16 @@ function M.ArcaneReco(A, moving)
         return "mirror", true, string.format(L("%s bereit"), spells.mirror)
     elseif A.inCombat and A.gemReady and missing >= M.MANA_GEM_YIELD then
         return "gem", true, string.format(L("Manastein: %d Mana fehlen"), missing)
+    elseif moving and A.pomUp and A.targetOK then
+        return "ab", true, string.format(L("Bewegung: %s aktiv, %s"), spells.pom, spells.ab)
     elseif moving and A.abarrUsable then
         return "abarr", false, string.format(L("Bewegung: %s"), spells.abarr)
     elseif moving and cfg.showMovementFireBlast and A.fireblastUsable then
         return "fb_move", false, string.format(L("Bewegung: %s"), spells.fireblast)
     elseif moving and A.targetOK and A.abarrKnown and A.abarrCD < 999 then
         return "abarr", false, string.format(L("Bewegung: %s CD %.1fs"), spells.abarr, A.abarrCD)
+    elseif moving then
+        return nil, false, L("Bewegung: kein Spontanzauber bereit")
     elseif A.inCombat and A.evoReady and A.manaPct < M.EVO_BELOW * 100 and evoNeeded then
         if A.stacks == 0 then return "evo", true, string.format(L("%s: Mana %d%%"), spells.evo, A.manaPct) end
         return A.abarrUsable and "abarr" or "am", false, string.format(L("Stapel abbauen, dann %s"), spells.evo)
@@ -3124,6 +3201,16 @@ function M.ArcaneCdHint(label, ready, cd)
     return ""
 end
 
+-- No recommendation (moving without an instant): the one-button shows nothing and casts nothing.
+function M.OneButtonIdle(text)
+    if not oneButton or oneButton.currentKey == nil then return end
+    oneButton.currentKey, oneButton.dynamicMacroText, oneButton.spellName = nil, nil, nil
+    oneButton.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+    oneButton.spellText:SetText(text)
+    oneButton.border:SetVertexColor(0.5, 0.5, 0.5, 0.6)
+    oneButton:SetAlpha(0.5)
+end
+
 function M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, utilCD)
     local A = M.ArcaneState(now, targetOK)
     M.SampleTargetHealth(now, targetOK)
@@ -3133,6 +3220,7 @@ function M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, ut
     if not reco then reco, urgent, note = M.ArcaneReco(A, moving) end
 
     MarkRecommended(reco, urgent)
+    if not reco then M.OneButtonIdle(L("Bewegung")) end
     NoteRecommendation(reco, note)
     if reco == "stop" then UpdateAnalyzerIcon("interrupt") elseif reco == "invis" then UpdateAnalyzerIcon("invis") else UpdateAnalyzerIcon(nil) end
     RefreshAnalyzerWindow()
@@ -3287,6 +3375,7 @@ function KR:PLAYER_REGEN_DISABLED()
     wipe(fireballTimes)
     lastCastEnd = 0
     M.ResetDrain() -- Arcane: measure the burn drain per fight (raid buffs differ)
+    M.ResetBurnState(); wipe(M.ttdByGuid)
     ResetFightStats()
     analyzer.current = NewRun("boss", UnitName("target") or L("Bossfight"))
 end
@@ -3364,6 +3453,7 @@ function KR:UNIT_SPELLCAST_SUCCEEDED(unit, spell)
     if unit ~= "player" then return end
     lastCastEnd = GetTime()
     lastCastName = spell
+    M.lastCastAt[spell or ""] = lastCastEnd -- Arcane: no re-recommendation right after the cast
     if spell == spells.combustion then
         StartBurstQueue(L("Spiegelbilder/Burst-CDs vor Feuerball"))
     elseif spell == spells.mirror then
@@ -3543,7 +3633,7 @@ local function HandleSlash(msg)
         if sub == "auto" or sub == "mana" then cfg.arcaneBurnMode = sub end
         pct = tonumber(pct)
         if pct then cfg.arcaneBurnMana = math.max(10, math.min(90, pct)) end
-        M.burn = nil -- decide again with the new setting
+        M.ResetBurnState() -- decide again with the new setting
         print(string.format(L("MageHelper: Burn-Modus = %s, Mana-Schwelle %d%%"), cfg.arcaneBurnMode == "mana" and L("Nur nach Mana") or L("Automatisch (Zeit bis zum Tod gegen Mana)"), cfg.arcaneBurnMana))
         if sub ~= "auto" and sub ~= "mana" and not pct then print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana")) end
     elseif cmd == "lang" or cmd == "sprache" then
@@ -3677,7 +3767,7 @@ local function SetupOptions(db)
                     cfg.useGloves = v; RebuildSpellMacros()
                 end),
             } },
-            arcane = { type = "group", name = L("Arkan"), order = 2.5, get = get, set = function(info, v) cfg[info[#info]] = v; M.burn = nil end, args = {
+            arcane = { type = "group", name = L("Arkan"), order = 2.5, get = get, set = function(info, v) cfg[info[#info]] = v; M.ResetBurnState() end, args = {
                 help = { type = "description", order = 1, fontSize = "medium",
                     name = L("Burn: Arkanschlag auch mit 4 Stapeln. Sparen: Arkanschlag bis 3 Stapel, dann Arkane Geschosse. Während Arkane Macht, Heldentum/Kampfrausch oder dem T10-Spiegelbild-Buff wird immer geburnt.\n\nAutomatisch: Burn, solange dein Mana über der Schwelle liegt, und darunter weiter, wenn die Schätzung (Lebensverlust des Bosses gegen deinen gemessenen Manaverbrauch) sagt, dass dein Mana bis zu seinem Tod reicht. Nur nach Mana: nur die Schwelle.") },
                 arcaneBurnMode = { type = "select", name = L("Burn oder Sparen"), order = 2,
@@ -3753,7 +3843,7 @@ function MH:ApplyProfile()
         analyzerButton:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.analyzerIconX or -10, cfg.analyzerIconY or -144)
     end
     if not cfg.debugMode and KR.debugInfo then KR.debugInfo:SetText("") end
-    M.burn = nil
+    M.ResetBurnState()
     M.ApplyRotaMode()
     RebuildSpellMacros()
     ApplyTheme()
@@ -3791,6 +3881,7 @@ function MH:OnEnable()
     -- After a fresh login the equipment may not be readable yet: tidy the T9 swap a bit later.
     self:ScheduleTimer(function()
         CleanSwap(chr.moltenRestorePending)
+        M.t10Count = nil -- T10 links may have been unreadable when first counted
         M.ApplyRotaMode() -- talents may not have been readable at login
         if chr.moltenRestorePending then RestoreAfterMolten() end -- cast in combat before a reload
     end, 5)
