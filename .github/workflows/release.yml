@@ -1,7 +1,7 @@
 name: Release
 
-# Push a tag like v3.4 (it must match "## Version" in MageHelper.toc) to build
-# MageHelper-v3.4.zip and attach it to a GitHub release. Run it by hand to get
+# Push a tag like v3.4 (it must match "## Version" in ClassHelper.toc) to build
+# ClassHelper-v3.4.zip and attach it to a GitHub release. Run it by hand to get
 # the zip as a workflow artifact without a release.
 on:
   push:
@@ -29,27 +29,27 @@ jobs:
       - name: Tag matches TOC version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          toc=$(grep -m1 '^## Version:' MageHelper.toc | sed 's/^## Version: *//' | tr -d '\r')
+          toc=$(grep -m1 '^## Version:' ClassHelper.toc | sed 's/^## Version: *//' | tr -d '\r')
           tag="${GITHUB_REF_NAME#v}"
           if [ "$toc" != "$tag" ]; then
-            echo "::error::MageHelper.toc says $toc, the tag says $tag"
+            echo "::error::ClassHelper.toc says $toc, the tag says $tag"
             exit 1
           fi
 
       - name: Build zip
         run: |
-          name="MageHelper-${GITHUB_REF_NAME}"
-          mkdir -p dist/MageHelper
-          cp MageHelper.toc MageHelper.lua embeds.xml LICENSE README.md dist/MageHelper/
-          cp -r Libs dist/MageHelper/
-          (cd dist && zip -q -r -9 "${name}.zip" MageHelper)
+          name="ClassHelper-${GITHUB_REF_NAME}"
+          mkdir -p dist/ClassHelper
+          cp ClassHelper.toc ClassHelper.lua embeds.xml LICENSE README.md dist/ClassHelper/
+          cp -r Libs dist/ClassHelper/
+          (cd dist && zip -q -r -9 "${name}.zip" ClassHelper)
           unzip -l "dist/${name}.zip" | tail -1
           echo "ZIP=dist/${name}.zip" >> "$GITHUB_ENV"
 
       - name: Upload as workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: MageHelper-${{ github.ref_name }}
+          name: ClassHelper-${{ github.ref_name }}
           path: ${{ env.ZIP }}
 
       - name: Attach to GitHub release
@@ -60,5 +60,5 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$ZIP" --title "MageHelper $GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" "$ZIP" --title "ClassHelper $GITHUB_REF_NAME" --generate-notes
           fi

@@ -1,10 +1,10 @@
--- MageHelper v3.5 Fire, Arcane and Frost rotations, Spellsteal helper; T9 swap, themes, flask and potion choice, Ace3 settings; German + English client support
+-- ClassHelper v4.0 (formerly MageHelper): class rotation helper. Mage: Fire, Arcane, Frost; Spellsteal, T9 swap, Tear Gas helper; themes, flask/potion choice, Ace3 settings; German + English client support
 -- WotLK 3.3.5 Fire, Arcane and Frost Mage helper. Fire: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
-local ADDON = "MageHelper"
+local ADDON = "ClassHelper"
 local MH = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceEvent-3.0", "AceTimer-3.0", "AceConsole-3.0")
 -- KR is the main rotation bar. Its KR:<EVENT> handlers are registered through AceEvent in MH:OnEnable.
-local KR = CreateFrame("Frame", "MageHelperFrame", UIParent)
+local KR = CreateFrame("Frame", "ClassHelperFrame", UIParent)
 -- Settings (AceDB, set in MH:OnInitialize): cfg = active profile, shareable between characters;
 -- chr = data that belongs to this character only (FM partner/target, T9 swap, analyzer runs).
 local cfg, chr
@@ -73,11 +73,11 @@ local defaults = {
 local CHAR_KEYS = { focusMagicTarget = true, focusMagicPartner = true, analyzer = true }
 
 -- Localization: the German UI texts are the keys. L() returns the English text when the
--- client is not German (or /mh lang en is set); a missing entry falls back to German.
+-- client is not German (or /ch lang en is set); a missing entry falls back to German.
 -- Spell names never go through L(): they come from GetSpellInfo(id), which is already
 -- in the client language.
 local L_EN = {
-    ["|cffff7d0aMageHelper Fight-Report|r"] = "|cffff7d0aMageHelper fight report|r",
+    ["|cffff7d0aClassHelper Fight-Report|r"] = "|cffff7d0aClassHelper fight report|r",
     ["Dauer: %.0fs  Feuerbälle/min: %.1f  Feuerbälle: %d  Pyros: %d"] = "Duration: %.0fs  Fireballs/min: %.1f  Fireballs: %d  Pyros: %d",
     ["LB-Casts: %d  Combustion: %d  Spiegelbilder: %d  Eisblock: %d"] = "LB casts: %d  Combustion: %d  Mirror Images: %d  Ice Block: %d",
     ["Hot-Streak-Procs erkannt: %d  Cast-Gaps: %d"] = "Hot Streak procs detected: %d  Cast gaps: %d",
@@ -101,7 +101,7 @@ local L_EN = {
     ["Trank"] = "Potion",
     ["MF-Ziel: %s"] = "FM target: %s",
     ["MF-Ziel: kein Ziel gesetzt"] = "FM target: none set",
-    ["MageHelper: Fokusmagie-Ziel gesetzt: %s"] = "MageHelper: Focus Magic target set: %s",
+    ["ClassHelper: Fokusmagie-Ziel gesetzt: %s"] = "ClassHelper: Focus Magic target set: %s",
     ["Klick: Fokusmagie auf %s und danach zurück aufs letzte Ziel"] = "Click: Focus Magic on %s, then back to your last target",
     ["Klick: Fokusmagie auf Mouseover, Fokus oder Ziel. MF-Ziel auswählen über MF SET"] = "Click: Focus Magic on mouseover, focus or target. Pick an FM target via FM SET",
     ["Status: Habe ich Fokusmagie von einem anderen Mage?"] = "Status: do I have Focus Magic from another mage?",
@@ -113,9 +113,9 @@ local L_EN = {
     ["Der MF-OUT-Button nutzt danach das gewählte Ziel."] = "The FM OUT button then uses the chosen target.",
     [" (Partner: %s)"] = " (partner: %s)",
     ["(gilt ab Kampfende)"] = "(applies after combat)",
-    ["MageHelper: MF-Partner gespeichert: %s"] = "MageHelper: FM partner saved: %s",
-    ["MageHelper: Im Kampf - das neue MF-Ziel gilt ab Kampfende."] = "MageHelper: In combat - the new FM target applies after combat.",
-    ["MageHelper: Kein MF-Partner gespeichert."] = "MageHelper: No FM partner saved.",
+    ["ClassHelper: MF-Partner gespeichert: %s"] = "ClassHelper: FM partner saved: %s",
+    ["ClassHelper: Im Kampf - das neue MF-Ziel gilt ab Kampfende."] = "ClassHelper: In combat - the new FM target applies after combat.",
+    ["ClassHelper: Kein MF-Partner gespeichert."] = "ClassHelper: No FM partner saved.",
     ["Nur Mages"] = "Only mages",
     ["Nur Heiler ohne MF"] = "Only healers without FM",
     ["Zurück zum Partner"] = "Back to partner",
@@ -147,17 +147,17 @@ local L_EN = {
     ["Letzter Boss: "] = "Last boss: ",
     ["Letzter Tod gespeichert: "] = "Last death saved: ",
     ["Trainingslauf"] = "Training run",
-    ["MageHelper Analyse: Training gestartet"] = "MageHelper Analyzer: training started",
-    ["MageHelper Analyse: Training gestoppt und als letzter Test gespeichert"] = "MageHelper Analyzer: training stopped and saved as last test",
-    ["MageHelper Analyse: Es läuft kein Training"] = "MageHelper Analyzer: no training running",
-    ["MageHelper Analyse: Kein letzter Test vorhanden"] = "MageHelper Analyzer: no last test available",
-    ["MageHelper Analyse: Lauf %s gespeichert"] = "MageHelper Analyzer: run %s saved",
-    ["MageHelper Analyse: Lauf A und B müssen gespeichert sein"] = "MageHelper Analyzer: runs A and B must be saved first",
-    ["|cffff7d0aMageHelper Analyse Vergleich|r"] = "|cffff7d0aMageHelper Analyzer comparison|r",
+    ["ClassHelper Analyse: Training gestartet"] = "ClassHelper Analyzer: training started",
+    ["ClassHelper Analyse: Training gestoppt und als letzter Test gespeichert"] = "ClassHelper Analyzer: training stopped and saved as last test",
+    ["ClassHelper Analyse: Es läuft kein Training"] = "ClassHelper Analyzer: no training running",
+    ["ClassHelper Analyse: Kein letzter Test vorhanden"] = "ClassHelper Analyzer: no last test available",
+    ["ClassHelper Analyse: Lauf %s gespeichert"] = "ClassHelper Analyzer: run %s saved",
+    ["ClassHelper Analyse: Lauf A und B müssen gespeichert sein"] = "ClassHelper Analyzer: runs A and B must be saved first",
+    ["|cffff7d0aClassHelper Analyse Vergleich|r"] = "|cffff7d0aClassHelper Analyzer comparison|r",
     ["B-A DPS: %+0.0f, Schaden: %+0.0f, Pyros: %+d, Hot-Streak-Procs: %+d"] = "B-A DPS: %+0.0f, damage: %+0.0f, Pyros: %+d, Hot Streak procs: %+d",
-    ["MageHelper Analyse: Kein Bossfight gespeichert"] = "MageHelper Analyzer: no boss fight saved",
-    ["|cffff7d0aMageHelper letzter Bossfight|r"] = "|cffff7d0aMageHelper last boss fight|r",
-    ["MageHelper Analyse: Kein Death Recap gespeichert"] = "MageHelper Analyzer: no death recap saved",
+    ["ClassHelper Analyse: Kein Bossfight gespeichert"] = "ClassHelper Analyzer: no boss fight saved",
+    ["|cffff7d0aClassHelper letzter Bossfight|r"] = "|cffff7d0aClassHelper last boss fight|r",
+    ["ClassHelper Analyse: Kein Death Recap gespeichert"] = "ClassHelper Analyzer: no death recap saved",
     ["Treffer"] = "Hit",
     ["Unsichtbarkeit aktiv - danach abbrechen"] = "Invisibility active - cancel it afterwards",
     ["LK: UNSICHTBARKEIT JETZT - Threat %.0f%%"] = "LK: INVISIBILITY NOW - threat %.0f%%",
@@ -166,7 +166,7 @@ local L_EN = {
     ["Als A speichern"] = "Save as A",
     ["Als B speichern"] = "Save as B",
     ["A/B vergleichen"] = "Compare A/B",
-    ["MageHelper Analyse"] = "MageHelper Analyzer",
+    ["ClassHelper Analyse"] = "ClassHelper Analyzer",
     ["Vergleich"] = "Compare",
     ["Tod"] = "Death",
     ["Schließen"] = "Close",
@@ -202,84 +202,84 @@ local L_EN = {
     ["  FS cd: %.1fs"] = "  FBl cd: %.1fs",
     ["JA"] = "YES",
     ["NEIN"] = "NO",
-    ["|cffff7d0aMageHelper v%s|r geladen. /mh help"] = "|cffff7d0aMageHelper v%s|r loaded. /mh help",
-    ["MageHelper: Bar gesperrt"] = "MageHelper: bar locked",
-    ["MageHelper: Bar verschiebbar"] = "MageHelper: bar unlocked",
-    ["MageHelper: Buff-Bar gesperrt"] = "MageHelper: buff bar locked",
-    ["MageHelper: Buff-Bar verschiebbar"] = "MageHelper: buff bar unlocked",
-    ["MageHelper: Combustion-LB-Fenster = %ss"] = "MageHelper: Combustion LB window = %ss",
-    ["MageHelper: Boss-Iceblock-Skips AUS"] = "MageHelper: boss Ice Block skips OFF",
-    ["MageHelper: Boss-Iceblock-Skips AN"] = "MageHelper: boss Ice Block skips ON",
-    ["MageHelper: ICC-Utility-Warnungen AUS"] = "MageHelper: ICC utility warnings OFF",
-    ["MageHelper: ICC-Utility-Warnungen AN"] = "MageHelper: ICC utility warnings ON",
-    ["MageHelper: Eisblock-Vorlauf = %ss"] = "MageHelper: Ice Block lead time = %ss",
-    ["MageHelper: Eisblock-Abbruch-Hinweis AUS"] = "MageHelper: Ice Block cancel hint OFF",
-    ["MageHelper: Eisblock-Abbruch-Hinweis AN"] = "MageHelper: Ice Block cancel hint ON",
-    ["MageHelper: Mystic-Buffet-Eisblock ab %s Stacks"] = "MageHelper: Mystic Buffet Ice Block at %s stacks",
-    ["MageHelper: Instabilität-STOP ab %s Stacks"] = "MageHelper: Instability STOP at %s stacks",
-    ["MageHelper: Debug-Anzeige AN"] = "MageHelper: debug display ON",
-    ["MageHelper: Debug-Anzeige AUS"] = "MageHelper: debug display OFF",
-    ["MageHelper Debug: Hot Streak erkannt="] = "MageHelper Debug: Hot Streak detected=",
-    ["MageHelper Debug: /mh debug on für Live-Anzeige, /mh report für Fight-Report"] = "MageHelper Debug: /mh debug on for the live display, /mh report for the fight report",
-    ["MageHelper: Fight-Report nach Kampf AUS"] = "MageHelper: fight report after combat OFF",
-    ["MageHelper: Fight-Report nach Kampf AN"] = "MageHelper: fight report after combat ON",
-    ["MageHelper: /use 10 aktiv"] = "MageHelper: /use 10 enabled",
-    ["MageHelper: /use 10 aus"] = "MageHelper: /use 10 disabled",
-    ["MageHelper: Bitte freundliches Ziel anwählen und /mh fm set nutzen"] = "MageHelper: Target a friendly player and use /mh fm set",
-    ["MageHelper: Fokusmagie-Ziel gelöscht"] = "MageHelper: Focus Magic target cleared",
-    ["MageHelper: Sprache = %s (Buttons und Fenster nach /reload)"] = "MageHelper: language = %s (buttons and windows after /reload)",
-    ["MageHelper Befehle:"] = "MageHelper commands:",
-    ["/mh show|hide - Bar an/aus"] = "/mh show|hide - show/hide bar",
-    ["/mh lock|unlock - Bar sperren/verschieben"] = "/mh lock|unlock - lock/move bar",
-    ["/mh comb 10 - benötigte LB-Restzeit für Einäschern"] = "/mh comb 10 - LB time left required for Combustion",
-    ["/mh gloves on|off - /use 10 in Spellbuttons"] = "/mh gloves on|off - /use 10 in spell buttons",
-    ["/mh buffs show|hide|lock|unlock - zweite Buff-Bar"] = "/mh buffs show|hide|lock|unlock - second buff bar",
-    ["/mh fm - MF-Ziel-Auswahl öffnen"] = "/mh fm - open the FM target picker",
-    ["/mh fm set|NAME - Ziel bzw. NAME als MF-Partner speichern"] = "/mh fm set|NAME - save your target or NAME as FM partner",
-    ["/mh fm back|clear - zurück zum Partner / alles löschen"] = "/mh fm back|clear - back to partner / clear everything",
-    ["/mh skips on|off - Eisblock-Bossmechaniken an/aus"] = "/mh skips on|off - Ice Block boss mechanics on/off",
-    ["/mh icelead 1 - Eisblock bei Boss-Casts 1 Sekunde vor Einschlag anzeigen"] = "/mh icelead 1 - show Ice Block 1 second before a boss cast lands",
-    ["/mh icecancel on|off - Nach Eisblock Abbruch-Hinweis anzeigen"] = "/mh icecancel on|off - show cancel hint after Ice Block",
-    ["/mh utility on|off - ICC-Utility: Sindra/Putri/BQ/Lady an/aus"] = "/mh utility on|off - ICC utility: Sindra/Putri/BQ/Lady on/off",
-    ["/mh buffet 5 - Mystic Buffet Eisblock ab X Stacks"] = "/mh buffet 5 - Mystic Buffet Ice Block at X stacks",
-    ["/mh instability 5 - Stopcasting ab X Instabilität-Stapeln"] = "/mh instability 5 - stop casting at X Instability stacks",
-    ["/mh debug on|off - Live-Debug: warum empfiehlt das Addon etwas"] = "/mh debug on|off - live debug: why the addon recommends something",
-    ["/mh debug - Hot-Streak/Buffnamen einmal ausgeben"] = "/mh debug - print Hot Streak/buff names once",
+    ["|cffff7d0aClassHelper v%s|r geladen. /ch help"] = "|cffff7d0aClassHelper v%s|r loaded. /ch help",
+    ["ClassHelper: Bar gesperrt"] = "ClassHelper: bar locked",
+    ["ClassHelper: Bar verschiebbar"] = "ClassHelper: bar unlocked",
+    ["ClassHelper: Buff-Bar gesperrt"] = "ClassHelper: buff bar locked",
+    ["ClassHelper: Buff-Bar verschiebbar"] = "ClassHelper: buff bar unlocked",
+    ["ClassHelper: Combustion-LB-Fenster = %ss"] = "ClassHelper: Combustion LB window = %ss",
+    ["ClassHelper: Boss-Iceblock-Skips AUS"] = "ClassHelper: boss Ice Block skips OFF",
+    ["ClassHelper: Boss-Iceblock-Skips AN"] = "ClassHelper: boss Ice Block skips ON",
+    ["ClassHelper: ICC-Utility-Warnungen AUS"] = "ClassHelper: ICC utility warnings OFF",
+    ["ClassHelper: ICC-Utility-Warnungen AN"] = "ClassHelper: ICC utility warnings ON",
+    ["ClassHelper: Eisblock-Vorlauf = %ss"] = "ClassHelper: Ice Block lead time = %ss",
+    ["ClassHelper: Eisblock-Abbruch-Hinweis AUS"] = "ClassHelper: Ice Block cancel hint OFF",
+    ["ClassHelper: Eisblock-Abbruch-Hinweis AN"] = "ClassHelper: Ice Block cancel hint ON",
+    ["ClassHelper: Mystic-Buffet-Eisblock ab %s Stacks"] = "ClassHelper: Mystic Buffet Ice Block at %s stacks",
+    ["ClassHelper: Instabilität-STOP ab %s Stacks"] = "ClassHelper: Instability STOP at %s stacks",
+    ["ClassHelper: Debug-Anzeige AN"] = "ClassHelper: debug display ON",
+    ["ClassHelper: Debug-Anzeige AUS"] = "ClassHelper: debug display OFF",
+    ["ClassHelper Debug: Hot Streak erkannt="] = "ClassHelper Debug: Hot Streak detected=",
+    ["ClassHelper Debug: /ch debug on für Live-Anzeige, /ch report für Fight-Report"] = "ClassHelper Debug: /ch debug on for the live display, /ch report for the fight report",
+    ["ClassHelper: Fight-Report nach Kampf AUS"] = "ClassHelper: fight report after combat OFF",
+    ["ClassHelper: Fight-Report nach Kampf AN"] = "ClassHelper: fight report after combat ON",
+    ["ClassHelper: /use 10 aktiv"] = "ClassHelper: /use 10 enabled",
+    ["ClassHelper: /use 10 aus"] = "ClassHelper: /use 10 disabled",
+    ["ClassHelper: Bitte freundliches Ziel anwählen und /ch fm set nutzen"] = "ClassHelper: Target a friendly player and use /ch fm set",
+    ["ClassHelper: Fokusmagie-Ziel gelöscht"] = "ClassHelper: Focus Magic target cleared",
+    ["ClassHelper: Sprache = %s (Buttons und Fenster nach /reload)"] = "ClassHelper: language = %s (buttons and windows after /reload)",
+    ["ClassHelper Befehle:"] = "ClassHelper commands:",
+    ["/ch show|hide - Bar an/aus"] = "/ch show|hide - show/hide bar",
+    ["/ch lock|unlock - Bar sperren/verschieben"] = "/ch lock|unlock - lock/move bar",
+    ["/ch comb 10 - benötigte LB-Restzeit für Einäschern"] = "/ch comb 10 - LB time left required for Combustion",
+    ["/ch gloves on|off - /use 10 in Spellbuttons"] = "/ch gloves on|off - /use 10 in spell buttons",
+    ["/ch buffs show|hide|lock|unlock - zweite Buff-Bar"] = "/ch buffs show|hide|lock|unlock - second buff bar",
+    ["/ch fm - MF-Ziel-Auswahl öffnen"] = "/ch fm - open the FM target picker",
+    ["/ch fm set|NAME - Ziel bzw. NAME als MF-Partner speichern"] = "/ch fm set|NAME - save your target or NAME as FM partner",
+    ["/ch fm back|clear - zurück zum Partner / alles löschen"] = "/ch fm back|clear - back to partner / clear everything",
+    ["/ch skips on|off - Eisblock-Bossmechaniken an/aus"] = "/ch skips on|off - Ice Block boss mechanics on/off",
+    ["/ch icelead 1 - Eisblock bei Boss-Casts 1 Sekunde vor Einschlag anzeigen"] = "/ch icelead 1 - show Ice Block 1 second before a boss cast lands",
+    ["/ch icecancel on|off - Nach Eisblock Abbruch-Hinweis anzeigen"] = "/ch icecancel on|off - show cancel hint after Ice Block",
+    ["/ch utility on|off - ICC-Utility: Sindra/Putri/BQ/Lady an/aus"] = "/ch utility on|off - ICC utility: Sindra/Putri/BQ/Lady on/off",
+    ["/ch buffet 5 - Mystic Buffet Eisblock ab X Stacks"] = "/ch buffet 5 - Mystic Buffet Ice Block at X stacks",
+    ["/ch instability 5 - Stopcasting ab X Instabilität-Stapeln"] = "/ch instability 5 - stop casting at X Instability stacks",
+    ["/ch debug on|off - Live-Debug: warum empfiehlt das Addon etwas"] = "/ch debug on|off - live debug: why the addon recommends something",
+    ["/ch debug - Hot-Streak/Buffnamen einmal ausgeben"] = "/ch debug - print Hot Streak/buff names once",
     ["v1.8: Hot Streak/Pyro hat Vorrang vor LB-Refresh, auch wenn LB gerade explodiert ist."] = "Hot Streak/Pyro takes priority over LB refresh, even right after LB exploded.",
-    ["/mh analyse - Analysefenster öffnen (oder A-Icon unter der Minimap)"] = "/mh analyse - open the analyzer window (or the A icon below the minimap)",
-    ["/mh analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"] = "/mh analyse start|stop|a|b|compare|boss|death - analyzer functions",
-    ["/mh report - letzten/aktuellen Fight-Report ausgeben"] = "/mh report - print the last/current fight report",
-    ["/mh autoreport on|off - Report nach Kampf an/aus"] = "/mh autoreport on|off - report after combat on/off",
-    ["/mh lang auto|de|en - Sprache (auto = Client-Sprache)"] = "/mh lang auto|de|en - language (auto = client language)",
+    ["/ch analyse - Analysefenster öffnen (oder A-Icon unter der Minimap)"] = "/ch analyse - open the analyzer window (or the A icon below the minimap)",
+    ["/ch analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"] = "/ch analyse start|stop|a|b|compare|boss|death - analyzer functions",
+    ["/ch report - letzten/aktuellen Fight-Report ausgeben"] = "/ch report - print the last/current fight report",
+    ["/ch autoreport on|off - Report nach Kampf an/aus"] = "/ch autoreport on|off - report after combat on/off",
+    ["/ch lang auto|de|en - Sprache (auto = Client-Sprache)"] = "/ch lang auto|de|en - language (auto = client language)",
     ["Glühende Rüstung aktiv, gewirkt mit 2 T9-Teilen."] = "Molten Armor active, cast with 2 T9 pieces.",
     ["Glühende Rüstung aktiv, aber ohne T9 gewirkt. Klick zieht T9 an, der nächste Klick erneuert die Rüstung."] = "Molten Armor active, but cast without T9. Click puts T9 on, the next click renews the armor.",
     ["Glühende Rüstung aktiv."] = "Molten Armor active.",
     ["T9 wird angelegt ..."] = "Equipping T9 ...",
     ["..."] = "...",
-    ["MageHelper: %s ist nicht mehr in den Taschen, das T9-Teil bleibt angelegt."] = "MageHelper: %s is no longer in your bags, the T9 piece stays equipped.",
-    ["MageHelper: Ausrüstung konnte nicht vollständig zurückgewechselt werden, bitte von Hand prüfen."] = "MageHelper: could not swap all gear back, please check by hand.",
+    ["ClassHelper: %s ist nicht mehr in den Taschen, das T9-Teil bleibt angelegt."] = "ClassHelper: %s is no longer in your bags, the T9 piece stays equipped.",
+    ["ClassHelper: Ausrüstung konnte nicht vollständig zurückgewechselt werden, bitte von Hand prüfen."] = "ClassHelper: could not swap all gear back, please check by hand.",
     ["Jede Flask zählt"] = "Any flask counts",
     ["Automatisch (%s)"] = "Automatic (%s)",
     ["Flask für die Buff-Leiste"] = "Flask for the buff bar",
     ["Automatisch: beste Flask für Klasse und Skillung, Steinblut für Todesritter in Frostpräsenz und Druiden in Bärengestalt. Gilt pro Charakter."] = "Automatic: best flask for class and spec, Stoneblood for death knights in Frost Presence and druids in Bear Form. Per character.",
-    ["MageHelper: Flask = %s"] = "MageHelper: flask = %s",
-    ["MageHelper: Trank = %s"] = "MageHelper: potion = %s",
+    ["ClassHelper: Flask = %s"] = "ClassHelper: flask = %s",
+    ["ClassHelper: Trank = %s"] = "ClassHelper: potion = %s",
     ["Kein Trank"] = "No potion",
     ["Trank für Cooldowns und Buff-Leiste"] = "Potion for cooldowns and buff bar",
     ["Automatisch nach der aktiven Rota: Feuer Wilde Magie, Arkan und Frost Geschwindigkeit. Die Cooldown-Makros ändern sich nur außerhalb des Kampfes. Gilt pro Charakter."] = "Automatic by the active rotation: Fire Wild Magic, Arcane and Frost Speed. The cooldown macros change only out of combat. Per character.",
-    ["/mh trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste"] = "/mh potion auto|speed|wild|mana|indestructible|none - potion for the cooldown macros and the buff bar",
-    ["MageHelper: Im Kampf - die Makros ändern sich nach dem Kampf."] = "MageHelper: In combat - the macros change after combat.",
+    ["/ch trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste"] = "/ch potion auto|speed|wild|mana|indestructible|none - potion for the cooldown macros and the buff bar",
+    ["ClassHelper: Im Kampf - die Makros ändern sich nach dem Kampf."] = "ClassHelper: In combat - the macros change after combat.",
     ["Grau: kein Buff zu prüfen"] = "Grey: no buff to check",
     ["Die Cooldown-Makros aller Rotas nutzen diesen Trank."] = "The cooldown macros of all rotations use this potion.",
-    ["/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"] = "/mh flask auto|frost|rage|stone|mojo|resi|any - which flask the buff bar expects",
+    ["/ch flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"] = "/ch flask auto|frost|rage|stone|mojo|resi|any - which flask the buff bar expects",
     ["Farbschema"] = "Color theme",
     ["Signalfarben (grün, rot, orange, blau) bleiben in jedem Schema gleich."] = "Signal colors (green, red, orange, blue) stay the same in every theme.",
     ["Standard"] = "Standard",
     ["Rosa"] = "Pink",
     ["Blau"] = "Blue",
     ["Rot"] = "Red",
-    ["MageHelper: Farbschema = %s"] = "MageHelper: color theme = %s",
-    ["/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"] = "/mh theme standard|pink|blue|red - color theme of bars and windows",
+    ["ClassHelper: Farbschema = %s"] = "ClassHelper: color theme = %s",
+    ["/ch theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"] = "/ch theme standard|pink|blue|red - color theme of bars and windows",
     ["T9 angelegt: Klick wirkt Glühende Rüstung, danach wechselt deine Ausrüstung zurück."] = "T9 equipped: click casts Molten Armor, then your gear is swapped back.",
     ["Klick 1 zieht T9-Teile aus den Taschen an, Klick 2 wirkt Glühende Rüstung."] = "Click 1 equips T9 pieces from your bags, click 2 casts Molten Armor.",
     ["Zu wenig T9-Teile für den Set-Bonus (%d von 2). Klick wirkt Glühende Rüstung ohne Bonus."] = "Not enough T9 pieces for the set bonus (%d of 2). Click casts Molten Armor without the bonus.",
@@ -288,12 +288,12 @@ local L_EN = {
     ["Casten"] = "Cast",
     ["T9 an"] = "T9 on",
     ["kein T9"] = "no T9",
-    ["MageHelper T9: %d Teile angelegt, in den Taschen: %s"] = "MageHelper T9: %d pieces equipped, in bags: %s",
+    ["ClassHelper T9: %d Teile angelegt, in den Taschen: %s"] = "ClassHelper T9: %d pieces equipped, in bags: %s",
     ["keine"] = "none",
-    ["/mh t9 - T9-Teile und Status für Glühende Rüstung anzeigen"] = "/mh t9 - show T9 pieces and Molten Armor status",
+    ["/ch t9 - T9-Teile und Status für Glühende Rüstung anzeigen"] = "/ch t9 - show T9 pieces and Molten Armor status",
     ["Glühende Rüstung"] = "Molten Armor",
     ["Mit T9-Set-Bonus wirken (T9 anziehen, danach automatisch zurückwechseln)"] = "Cast with the T9 set bonus (equip T9, then swap back automatically)",
-    ["/mh config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"] = "/mh config - open the settings window (also under Interface > AddOns)",
+    ["/ch config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"] = "/ch config - open the settings window (also under Interface > AddOns)",
     ["Allgemein"] = "General",
     ["Rota-Leiste anzeigen"] = "Show rotation bar",
     ["Rota-Leiste sperren"] = "Lock rotation bar",
@@ -319,23 +319,23 @@ local L_EN = {
     ["Fight-Report nach jedem Kampf im Chat"] = "Fight report in chat after every fight",
     ["Debug-Zeile unter der Rota-Leiste"] = "Debug line below the rotation bar",
     ["Analysefenster öffnen"] = "Open analyzer window",
-    ["MageHelper: Einstellungen sind im Kampf gesperrt."] = "MageHelper: settings are locked in combat.",
+    ["ClassHelper: Einstellungen sind im Kampf gesperrt."] = "ClassHelper: settings are locked in combat.",
     -- Arcane rotation
     ["Arkan"] = "Arcane",
     ["Feuer"] = "Fire",
     ["Rota-Modus"] = "Rotation mode",
     ["Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan, Feuer oder Frost). Die Buttons wechseln nur außerhalb des Kampfes."] = "Automatic: the talent tree with the most points decides (Arcane, Fire or Frost). The buttons only switch out of combat.",
-    ["MageHelper: Rota = %s"] = "MageHelper: rotation = %s",
-    ["MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf."] = "MageHelper: In combat - the buttons switch after combat.",
-    ["/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"] = "/mh rota auto|fire|arcane|frost - Fire, Arcane or Frost rotation (auto = by talents)",
+    ["ClassHelper: Rota = %s"] = "ClassHelper: rotation = %s",
+    ["ClassHelper: Im Kampf - die Buttons wechseln nach dem Kampf."] = "ClassHelper: In combat - the buttons switch after combat.",
+    ["/ch rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"] = "/ch rota auto|fire|arcane|frost - Fire, Arcane or Frost rotation (auto = by talents)",
     ["Burn oder Sparen"] = "Burn or conserve",
     ["Automatisch (Zeit bis zum Tod gegen Mana)"] = "Automatic (time to die vs. mana)",
     ["Nur nach Mana"] = "By mana only",
     ["Burn ab Mana (%)"] = "Burn above mana (%)",
     ["Burn: Arkanschlag auch mit 4 Stapeln. Sparen: Arkanschlag bis 3 Stapel, dann Arkane Geschosse. Während Arkane Macht, Heldentum/Kampfrausch oder dem T10-Spiegelbild-Buff wird immer geburnt.\n\nAutomatisch: Burn, solange dein Mana über der Schwelle liegt, und darunter weiter, wenn die Schätzung (Lebensverlust des Bosses gegen deinen gemessenen Manaverbrauch) sagt, dass dein Mana bis zu seinem Tod reicht. Nur nach Mana: nur die Schwelle."] = "Burn: Arcane Blast, also at 4 stacks. Conserve: Arcane Blast up to 3 stacks, then Arcane Missiles. While Arcane Power, Heroism/Bloodlust or the T10 Mirror Image buff is up you always burn.\n\nAutomatic: burn while your mana is above the threshold, and below it keep burning when the estimate (the boss's health loss against your measured mana use) says your mana lasts until it dies. By mana only: the threshold alone.",
     ["Mana-Schwelle"] = "mana threshold",
-    ["MageHelper: Burn-Modus = %s, Mana-Schwelle %d%%"] = "MageHelper: burn mode = %s, mana threshold %d%%",
-    ["/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"] = "/mh burn auto|mana [percent] - Arcane: burn/conserve automatic or by mana only",
+    ["ClassHelper: Burn-Modus = %s, Mana-Schwelle %d%%"] = "ClassHelper: burn mode = %s, mana threshold %d%%",
+    ["/ch burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"] = "/ch burn auto|mana [percent] - Arcane: burn/conserve automatic or by mana only",
     ["%s bereit"] = "%s ready",
     ["%s zuerst (T10: +18%% Schaden)"] = "%s first (T10: +18%% damage)",
     ["Manastein: %d Mana fehlen"] = "Mana gem: %d mana missing",
@@ -380,10 +380,10 @@ local L_EN = {
     ["Zauberraub empfehlen"] = "Recommend Spellsteal",
     ["Auch nicht gelistete stehlbare Buffs empfehlen (nicht dringend)"] = "Also recommend unlisted stealable buffs (not urgent)",
     ["Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt aufs Ziel, mit Shift auf Mouseover. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels."] = "When your target has a stealable buff from the list of buffs worth stealing (e.g. Lord Jaraxxus, Lady Deathwhisper, the Faction Champions, the Argent Confessor and Sjonnir), the Steal button glows red, after the emergencies (Ice Block, Counterspell) and before damage. Spellsteal has a 30 yd range and costs a global cooldown; out of range the button turns blue. When only your focus has such a buff, the info line shows a hint; the button casts on your target, with Shift on your mouseover. The icon above the bar shows the target's first stealable buff.",
-    ["MageHelper: Zauberraub AUS"] = "MageHelper: Spellsteal OFF",
-    ["MageHelper: Zauberraub AN (nur lohnende Buffs)"] = "MageHelper: Spellsteal ON (only buffs worth stealing)",
-    ["MageHelper: Zauberraub AN (alle stehlbaren Buffs)"] = "MageHelper: Spellsteal ON (all stealable buffs)",
-    ["/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"] = "/mh steal on|off|all|worth - Spellsteal hint (all = also unlisted buffs)",
+    ["ClassHelper: Zauberraub AUS"] = "ClassHelper: Spellsteal OFF",
+    ["ClassHelper: Zauberraub AN (nur lohnende Buffs)"] = "ClassHelper: Spellsteal ON (only buffs worth stealing)",
+    ["ClassHelper: Zauberraub AN (alle stehlbaren Buffs)"] = "ClassHelper: Spellsteal ON (all stealable buffs)",
+    ["/ch raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"] = "/ch steal on|off|all|worth - Spellsteal hint (all = also unlisted buffs)",
     -- Putricide Tear Gas helper
     ["Gleich Tränengas: Unsichtbarkeit bei %.1f%% (Seuchenmord %.1f%%)"] = "Tear Gas soon: Invisibility at %.1f%% (Putricide %.1f%%)",
     ["JETZT Unsichtbarkeit: Tränengas kommt"] = "Invisibility NOW: Tear Gas incoming",
@@ -409,9 +409,9 @@ local L_EN = {
     ["Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen"] = "Putricide (normal): dodge Tear Gas with Invisibility",
     ["Unsichtbarkeit so viele Prozent über 80 % / 35 % anfordern"] = "Ask for Invisibility this many percent above 80% / 35%",
     ["Nur auf normal (10/25): Tränengas betäubt alle Spieler, bis Seuchenmord wieder angreift. Wer schon unsichtbar ist, wenn es landet, bleibt frei: Bei Seuchenmords Leben knapp über 80 % bzw. 35 % fordert der Unsichtbarkeit-Button rot auf, danach abbrechen und Seuchenmord allein schaden. Die Infozeile zählt bis zum Wiederangriff herunter; ist deine Bedrohung dann zu hoch, kommt Eisblock (oder Stop casten)."] = "Normal mode only (10/25): Tear Gas stuns every player until Putricide re-engages. Whoever is already invisible when it lands stays free: just above 80% / 35% of Putricide's health the Invisibility button turns red; cancel it afterwards and damage Putricide alone. The info line counts down to his re-engage; if your threat is too high then, Ice Block is suggested (or stop casting).",
-    ["MageHelper: Tränengas-Hilfe AN (Unsichtbarkeit %.1f%% über der Schwelle)"] = "MageHelper: Tear Gas helper ON (Invisibility %.1f%% above the threshold)",
-    ["MageHelper: Tränengas-Hilfe AUS"] = "MageHelper: Tear Gas helper OFF",
-    ["/mh tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35"] = "/mh teargas on|off|0.5-5 - Putricide (normal): dodge Tear Gas with Invisibility, number = percent above 80/35",
+    ["ClassHelper: Tränengas-Hilfe AN (Unsichtbarkeit %.1f%% über der Schwelle)"] = "ClassHelper: Tear Gas helper ON (Invisibility %.1f%% above the threshold)",
+    ["ClassHelper: Tränengas-Hilfe AUS"] = "ClassHelper: Tear Gas helper OFF",
+    ["/ch tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35"] = "/ch teargas on|off|0.5-5 - Putricide (normal): dodge Tear Gas with Invisibility, number = percent above 80/35",
     -- Frost rotation
     ["Frost"] = "Frost",
     ["Kein Begleiter: %s"] = "No pet: %s",
@@ -630,7 +630,7 @@ local function PrintFightReport(force)
     local dur = (fightStats.start and fightStats.start > 0) and (GetTime() - fightStats.start) or 0
     if dur <= 5 and not force then return end
     local fbpm = dur > 0 and (fightStats.fireballs / dur * 60) or 0
-    print(L("|cffff7d0aMageHelper Fight-Report|r"))
+    print(L("|cffff7d0aClassHelper Fight-Report|r"))
     if M.activeRota == "arcane" or M.activeRota == "frost" then -- Fireballs and their rating mean nothing there
         print(string.format(M.activeRota == "frost" and L("Dauer: %.0fs  Frost-Rota: keine Feuerball-Wertung") or L("Dauer: %.0fs  Arkan-Rota: keine Feuerball-Wertung"), dur))
         print(string.format(L("Spiegelbilder: %d  Eisblock: %d"), fightStats.mirrors or 0, fightStats.iceblocks or 0))
@@ -1199,7 +1199,7 @@ local function GetBestIcon(data)
 end
 
 local function CreateSpellButton(parent, key, label, spell, macro)
-    local btn = CreateFrame("Button", "MageHelperButton_"..key, parent, "SecureActionButtonTemplate")
+    local btn = CreateFrame("Button", "ClassHelperButton_"..key, parent, "SecureActionButtonTemplate")
     btn:SetWidth(44); btn:SetHeight(44)
     btn.icon = btn:CreateTexture(nil, "BACKGROUND")
     btn.icon:SetAllPoints(btn)
@@ -1236,7 +1236,7 @@ local function RebuildSpellMacros()
 end
 
 local function CreateOneButton(parent)
-    local btn = CreateFrame("Button", "MageHelperOneButton", parent)
+    local btn = CreateFrame("Button", "ClassHelperOneButton", parent)
     btn:SetWidth(62); btn:SetHeight(62)
     btn.icon = btn:CreateTexture(nil, "BACKGROUND")
     btn.icon:SetAllPoints(btn)
@@ -1261,7 +1261,7 @@ local function CreateOneButton(parent)
     btn.lockText:SetText("")
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText("MageHelper One-Button")
+        GameTooltip:SetText("ClassHelper One-Button")
         GameTooltip:AddLine(L("Zeigt die aktuelle Empfehlung der Rota."), 0.7,0.9,1, true)
         GameTooltip:AddLine(L("Im Kampf kann WoW den Klick-Spell nicht immer wechseln; dann den leuchtenden Einzelbutton nutzen."), 1,0.8,0.2, true)
         GameTooltip:Show()
@@ -1467,7 +1467,7 @@ end
 function M.SetPotionChoice(choice)
     chr.potion = choice
     RebuildSpellMacros() -- does nothing in combat; PLAYER_REGEN_ENABLED rebuilds the macros
-    if InCombatLockdown() then print(L("MageHelper: Im Kampf - die Makros ändern sich nach dem Kampf.")) end
+    if InCombatLockdown() then print(L("ClassHelper: Im Kampf - die Makros ändern sich nach dem Kampf.")) end
 end
 
 -- Fire cooldown button: gloves, Mana Sapphire and the chosen potion with Mirror Image.
@@ -1598,7 +1598,7 @@ local function RestoreAfterMolten(isRetry)
         if not e.orig then
             chr.moltenSwap[slot] = nil -- the slot was empty before: leave the T9 piece on
         elseif GetItemCount(ItemIdFromLink(e.orig) or 0) == 0 then
-            print(string.format(L("MageHelper: %s ist nicht mehr in den Taschen, das T9-Teil bleibt angelegt."), e.orig))
+            print(string.format(L("ClassHelper: %s ist nicht mehr in den Taschen, das T9-Teil bleibt angelegt."), e.orig))
             chr.moltenSwap[slot] = nil
         else
             EquipItemByName(e.orig, slot)
@@ -1620,7 +1620,7 @@ VerifyRestore = function()
     if M.restoreTries < 3 then
         RestoreAfterMolten(true)
     else
-        print(L("MageHelper: Ausrüstung konnte nicht vollständig zurückgewechselt werden, bitte von Hand prüfen."))
+        print(L("ClassHelper: Ausrüstung konnte nicht vollständig zurückgewechselt werden, bitte von Hand prüfen."))
         wipe(chr.moltenSwap)
     end
 end
@@ -1736,23 +1736,23 @@ local function SetFocusMagicTarget(name, asPartner)
     RefreshFocusMagicLabel()
     if RefreshFMPicker then RefreshFMPicker() end
     if name == "" then
-        print(L("MageHelper: Fokusmagie-Ziel gelöscht"))
+        print(L("ClassHelper: Fokusmagie-Ziel gelöscht"))
     elseif asPartner then
-        print(string.format(L("MageHelper: MF-Partner gespeichert: %s"), name))
+        print(string.format(L("ClassHelper: MF-Partner gespeichert: %s"), name))
     else
-        print(string.format(L("MageHelper: Fokusmagie-Ziel gesetzt: %s"), name))
+        print(string.format(L("ClassHelper: Fokusmagie-Ziel gesetzt: %s"), name))
     end
-    if fmPendingAfterCombat then print(L("MageHelper: Im Kampf - das neue MF-Ziel gilt ab Kampfende.")) end
+    if fmPendingAfterCombat then print(L("ClassHelper: Im Kampf - das neue MF-Ziel gilt ab Kampfende.")) end
 end
 
 local function BackToPartner()
     local partner = chr.focusMagicPartner or ""
-    if partner == "" then print(L("MageHelper: Kein MF-Partner gespeichert.")); return end
+    if partner == "" then print(L("ClassHelper: Kein MF-Partner gespeichert.")); return end
     SetFocusMagicTarget(partner, false)
 end
 
 local function CreateBuffButton(parent, data)
-    local btn = CreateFrame("Button", "MageHelperBuff_"..data.key, parent, data.cast and "SecureActionButtonTemplate" or nil)
+    local btn = CreateFrame("Button", "ClassHelperBuff_"..data.key, parent, data.cast and "SecureActionButtonTemplate" or nil)
     btn:SetWidth(34); btn:SetHeight(34)
     btn.data = data
     btn.icon = btn:CreateTexture(nil, "BACKGROUND")
@@ -1803,7 +1803,7 @@ local function CreateBuffButton(parent, data)
         btn:RegisterForClicks("LeftButtonUp")
         -- real macro text is set in RefreshFocusMagicButton() after all buttons exist
         btn:SetScript("PostClick", function()
-            if MageHelper_UpdateBuffBar then MageHelper_UpdateBuffBar() end
+            if ClassHelper_UpdateBuffBar then ClassHelper_UpdateBuffBar() end
         end)
     elseif data.cast then
         btn:SetAttribute("type", "spell")
@@ -2013,7 +2013,7 @@ RefreshFMPicker = function()
 end
 
 local function CreateFMPicker()
-    local f = CreateFrame("Frame", "MageHelperFMPicker", UIParent)
+    local f = CreateFrame("Frame", "ClassHelperFMPicker", UIParent)
     f:SetWidth(FM_LIST_WIDTH + 48); f:SetHeight(122 + FM_ROWS * FM_ROW_HEIGHT)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 60)
     f:SetFrameStrata("DIALOG")
@@ -2045,8 +2045,8 @@ local function CreateFMPicker()
         end)
         return cb
     end
-    f.filterMages = MakeFilter("MageHelperFMFilterMages", "fmFilterMages", L("Nur Mages"), 10)
-    f.filterHealers = MakeFilter("MageHelperFMFilterHealers", "fmFilterHealers", L("Nur Heiler ohne MF"), 160)
+    f.filterMages = MakeFilter("ClassHelperFMFilterMages", "fmFilterMages", L("Nur Mages"), 10)
+    f.filterHealers = MakeFilter("ClassHelperFMFilterHealers", "fmFilterHealers", L("Nur Heiler ohne MF"), 160)
     f.filterHealers:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText(L("Nur Heiler ohne MF"))
@@ -2059,7 +2059,7 @@ local function CreateFMPicker()
     f.status:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -64)
     f.status:SetWidth(FM_LIST_WIDTH); f.status:SetJustifyH("LEFT")
 
-    f.scroll = CreateFrame("ScrollFrame", "MageHelperFMScroll", f, "FauxScrollFrameTemplate")
+    f.scroll = CreateFrame("ScrollFrame", "ClassHelperFMScroll", f, "FauxScrollFrameTemplate")
     f.scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -82)
     f.scroll:SetWidth(FM_LIST_WIDTH); f.scroll:SetHeight(FM_ROWS * FM_ROW_HEIGHT)
     f.scroll:SetScript("OnVerticalScroll", function(self, offset)
@@ -2123,7 +2123,7 @@ local function CreateFMPicker()
         end
     end)
     f:Hide()
-    tinsert(UISpecialFrames, "MageHelperFMPicker") -- Escape closes the window
+    tinsert(UISpecialFrames, "ClassHelperFMPicker") -- Escape closes the window
     fmPicker = f
     ApplyTheme()
 end
@@ -2134,7 +2134,7 @@ local function ToggleFMPicker()
 end
 
 local function CreateBuffBar()
-    buffBar = CreateFrame("Frame", "MageHelperBuffBar", UIParent)
+    buffBar = CreateFrame("Frame", "ClassHelperBuffBar", UIParent)
     buffBar:SetWidth(500); buffBar:SetHeight(82)
     buffBar:SetPoint("CENTER", UIParent, "CENTER", cfg.buffBarX, cfg.buffBarY)
     buffBar:SetMovable(true); buffBar:EnableMouse(true)
@@ -2152,7 +2152,7 @@ local function CreateBuffBar()
     buffBar.title = buffBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     ThemeTitle(buffBar.title)
     buffBar.title:SetPoint("BOTTOMLEFT", buffBar, "TOPLEFT", 4, 2)
-    buffBar.title:SetText("MageHelper Buffs")
+    buffBar.title:SetText("ClassHelper Buffs")
     local x = 8
     for _, data in ipairs(buffChecks) do
         local b = CreateBuffButton(buffBar, data)
@@ -2161,7 +2161,7 @@ local function CreateBuffBar()
     end
 
     -- Opens the Focus Magic target picker. Not a secure button: it only chooses the target of FM OUT.
-    buffBar.fmSetButton = CreateFrame("Button", "MageHelperBuff_FMSet", buffBar)
+    buffBar.fmSetButton = CreateFrame("Button", "ClassHelperBuff_FMSet", buffBar)
     buffBar.fmSetButton:SetWidth(54); buffBar.fmSetButton:SetHeight(24)
     buffBar.fmSetButton:SetPoint("TOPLEFT", buffBar, "TOPLEFT", x + 4, -12)
     buffBar.fmSetButton.bg = buffBar.fmSetButton:CreateTexture(nil, "BACKGROUND")
@@ -2269,7 +2269,7 @@ local function CreateUI()
     KR.info = KR:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     KR.info:SetPoint("TOPLEFT", KR, "BOTTOMLEFT", 4, -18)
     KR.info:SetJustifyH("LEFT")
-    KR.info:SetText("MageHelper")
+    KR.info:SetText("ClassHelper")
 
     KR.debugInfo = KR:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     KR.debugInfo:SetPoint("TOPLEFT", KR.info, "BOTTOMLEFT", 0, -2)
@@ -2284,7 +2284,7 @@ local function CreateUI()
     KR.gap:Hide()
 
     -- Simple minimap toggle button; no menu.
-    local mm = CreateFrame("Button", "MageHelperMinimapButton", Minimap)
+    local mm = CreateFrame("Button", "ClassHelperMinimapButton", Minimap)
     mm:SetWidth(28); mm:SetHeight(28)
     mm:SetFrameStrata("MEDIUM")
     mm:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.minimapX, cfg.minimapY)
@@ -2302,13 +2302,13 @@ local function CreateUI()
     end)
     mm:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:SetText("MageHelper")
+        GameTooltip:SetText("ClassHelper")
         GameTooltip:AddLine(L("Linksklick: Bar an/aus"), 1,1,1)
         GameTooltip:Show()
     end)
     mm:SetScript("OnLeave", function() GameTooltip:Hide() end)
     -- Second small minimap toggle button for Buff-Bar only.
-    local bm = CreateFrame("Button", "MageHelperBuffMinimapButton", Minimap)
+    local bm = CreateFrame("Button", "ClassHelperBuffMinimapButton", Minimap)
     bm:SetWidth(24); bm:SetHeight(24)
     bm:SetFrameStrata("MEDIUM")
     bm:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.buffMinimapX, cfg.buffMinimapY)
@@ -2326,7 +2326,7 @@ local function CreateUI()
     end)
     bm:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:SetText("MageHelper Buffs")
+        GameTooltip:SetText("ClassHelper Buffs")
         GameTooltip:AddLine(L("Linksklick: Buff-Bar an/aus"), 1,1,1)
         GameTooltip:Show()
     end)
@@ -2348,7 +2348,7 @@ end
 
 
 -- =============================
--- MageHelper Analyzer / Recorder
+-- ClassHelper Analyzer / Recorder
 -- =============================
 local analyzer = {
     current = nil,
@@ -2456,7 +2456,7 @@ end
 
 local function AnalyzerStartTraining()
     analyzer.training = NewRun("training", UnitName("target") or L("Trainingslauf"))
-    print(L("MageHelper Analyse: Training gestartet"))
+    print(L("ClassHelper Analyse: Training gestartet"))
     RefreshAnalyzerWindow()
 end
 
@@ -2465,25 +2465,25 @@ local function AnalyzerStopTraining()
     if analyzer.training then
         db.lastTraining = CopyRun(FinishRun(analyzer.training))
         analyzer.training = nil
-        print(L("MageHelper Analyse: Training gestoppt und als letzter Test gespeichert"))
+        print(L("ClassHelper Analyse: Training gestoppt und als letzter Test gespeichert"))
     else
-        print(L("MageHelper Analyse: Es läuft kein Training"))
+        print(L("ClassHelper Analyse: Es läuft kein Training"))
     end
     RefreshAnalyzerWindow()
 end
 
 local function AnalyzerSaveSlot(slot)
     local db = AnalyzerDB()
-    if not db.lastTraining then print(L("MageHelper Analyse: Kein letzter Test vorhanden")); return end
+    if not db.lastTraining then print(L("ClassHelper Analyse: Kein letzter Test vorhanden")); return end
     if slot == "A" then db.trainingA = CopyRun(db.lastTraining) else db.trainingB = CopyRun(db.lastTraining) end
-    print(string.format(L("MageHelper Analyse: Lauf %s gespeichert"), slot))
+    print(string.format(L("ClassHelper Analyse: Lauf %s gespeichert"), slot))
     RefreshAnalyzerWindow()
 end
 
 local function AnalyzerCompare()
     local db = AnalyzerDB()
-    if not db.trainingA or not db.trainingB then print(L("MageHelper Analyse: Lauf A und B müssen gespeichert sein")); return end
-    print(L("|cffff7d0aMageHelper Analyse Vergleich|r"))
+    if not db.trainingA or not db.trainingB then print(L("ClassHelper Analyse: Lauf A und B müssen gespeichert sein")); return end
+    print(L("|cffff7d0aClassHelper Analyse Vergleich|r"))
     print(FormatRunLine("A", db.trainingA))
     print(FormatRunLine("B", db.trainingB))
     print(string.format(L("B-A DPS: %+0.0f, Schaden: %+0.0f, Pyros: %+d, Hot-Streak-Procs: %+d"), (db.trainingB.dps or 0)-(db.trainingA.dps or 0), (db.trainingB.damageDone or 0)-(db.trainingA.damageDone or 0), (db.trainingB.pyroCasts or 0)-(db.trainingA.pyroCasts or 0), (db.trainingB.hotProcs or 0)-(db.trainingA.hotProcs or 0)))
@@ -2493,16 +2493,16 @@ end
 local function AnalyzerReportLastBoss()
     local db = AnalyzerDB()
     local r = db.bossFights and db.bossFights[1]
-    if not r then print(L("MageHelper Analyse: Kein Bossfight gespeichert")); return end
-    print(L("|cffff7d0aMageHelper letzter Bossfight|r"))
+    if not r then print(L("ClassHelper Analyse: Kein Bossfight gespeichert")); return end
+    print(L("|cffff7d0aClassHelper letzter Bossfight|r"))
     print(FormatRunLine(r.name or "Boss", r))
 end
 
 local function AnalyzerShowDeathRecap()
     local db = AnalyzerDB()
     local recap = db.deathRecaps and db.deathRecaps[1]
-    if not recap then print(L("MageHelper Analyse: Kein Death Recap gespeichert")); return end
-    print("|cffff3333MageHelper Death Recap|r " .. (recap.timeText or ""))
+    if not recap then print(L("ClassHelper Analyse: Kein Death Recap gespeichert")); return end
+    print("|cffff3333ClassHelper Death Recap|r " .. (recap.timeText or ""))
     for i,hit in ipairs(recap.hits or {}) do
         print(string.format("%2d) %.1fs %s - %s: %s%s", i, hit.age or 0, hit.source or "?", hit.spell or L("Treffer"), tostring(hit.amount or 0), hit.overkill and hit.overkill > 0 and (" Overkill "..hit.overkill) or ""))
     end
@@ -2587,7 +2587,7 @@ local function IsLichKingEncounter()
     return false
 end
 
-function MageHelperAnalyzer_GetPriorityOverride()
+function ClassHelperAnalyzer_GetPriorityOverride()
     -- Analyzer overrides must never suppress Hot Streak by returning a harmless Fireball fallback.
     -- Only true emergency/utility actions return an override.
 
@@ -2634,7 +2634,7 @@ end
 
 local function ToggleAnalyzerMenu(anchor)
     if not analyzerMenu then
-        analyzerMenu = CreateFrame("Frame", "MageHelperAnalyzerMenu", UIParent)
+        analyzerMenu = CreateFrame("Frame", "ClassHelperAnalyzerMenu", UIParent)
         analyzerMenu:SetWidth(150); analyzerMenu:SetHeight(150)
         analyzerMenu.bg = analyzerMenu:CreateTexture(nil, "BACKGROUND"); analyzerMenu.bg:SetAllPoints(analyzerMenu); analyzerMenu.bg:SetTexture(0,0,0,0.85)
         ThemePanel(analyzerMenu, 0.85)
@@ -2650,7 +2650,7 @@ local function ToggleAnalyzerMenu(anchor)
 end
 
 local function CreateAnalyzerWindow()
-    analyzerFrame = CreateFrame("Frame", "MageHelperAnalyzerWindow", UIParent)
+    analyzerFrame = CreateFrame("Frame", "ClassHelperAnalyzerWindow", UIParent)
     analyzerFrame:SetWidth(520); analyzerFrame:SetHeight(245)
     analyzerFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
     analyzerFrame:SetMovable(true); analyzerFrame:EnableMouse(true)
@@ -2659,7 +2659,7 @@ local function CreateAnalyzerWindow()
     analyzerFrame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     analyzerFrame.bg = analyzerFrame:CreateTexture(nil, "BACKGROUND"); analyzerFrame.bg:SetAllPoints(analyzerFrame); analyzerFrame.bg:SetTexture(0,0,0,0.78)
     ThemePanel(analyzerFrame, 0.78)
-    analyzerFrame.title = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); analyzerFrame.title:SetPoint("TOPLEFT", 12, -10); analyzerFrame.title:SetText(L("MageHelper Analyse")); ThemeTitle(analyzerFrame.title)
+    analyzerFrame.title = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); analyzerFrame.title:SetPoint("TOPLEFT", 12, -10); analyzerFrame.title:SetText(L("ClassHelper Analyse")); ThemeTitle(analyzerFrame.title)
     analyzerFrame.text = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); analyzerFrame.text:SetPoint("TOPLEFT", 12, -42); analyzerFrame.text:SetJustifyH("LEFT"); analyzerFrame.text:SetWidth(496); analyzerFrame.text:SetText(""); ThemeText(analyzerFrame.text)
     CreateAnalyzerButton(analyzerFrame, "Start", 12, -178, 70, AnalyzerStartTraining)
     CreateAnalyzerButton(analyzerFrame, "Stop", 88, -178, 70, AnalyzerStopTraining)
@@ -2685,7 +2685,7 @@ local function UpdateAnalyzerIcon(status)
 end
 
 local function CreateAnalyzerMinimapButton()
-    local am = CreateFrame("Button", "MageHelperAnalyzerMinimapButton", Minimap)
+    local am = CreateFrame("Button", "ClassHelperAnalyzerMinimapButton", Minimap)
     analyzerButton = am
     am:SetWidth(24); am:SetHeight(24); am:SetFrameStrata("MEDIUM")
     am:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.analyzerIconX or -10, cfg.analyzerIconY or -144)
@@ -2706,7 +2706,7 @@ local function CreateAnalyzerMinimapButton()
         if button == "RightButton" then ToggleAnalyzerMenu(self)
         else if analyzerFrame:IsShown() then analyzerFrame:Hide() else RefreshAnalyzerWindow(); analyzerFrame:Show() end end
     end)
-    am:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetText(L("MageHelper Analyse")); GameTooltip:AddLine(L("Linksklick: Analysefenster"),1,1,1); GameTooltip:AddLine(L("Rechtsklick: Schnellmenü"),1,1,1); GameTooltip:Show() end)
+    am:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetText(L("ClassHelper Analyse")); GameTooltip:AddLine(L("Linksklick: Analysefenster"),1,1,1); GameTooltip:AddLine(L("Rechtsklick: Schnellmenü"),1,1,1); GameTooltip:Show() end)
     am:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
@@ -3198,7 +3198,7 @@ function M.EmergencyReco(filler, moveKey, utilType, utilNote, utilReady, utilCD)
     -- other cast would break the fading Invisibility)
     if M.JustPressed("ice") then return "wait", false, L("Eisblock gedrückt: nicht abbrechen") end
     if M.JustPressed("invis") then return "wait", false, L("Unsichtbarkeit gedrückt: nicht abbrechen") end
-    local override = MageHelperAnalyzer_GetPriorityOverride and MageHelperAnalyzer_GetPriorityOverride()
+    local override = ClassHelperAnalyzer_GetPriorityOverride and ClassHelperAnalyzer_GetPriorityOverride()
     local iceAura = cfg.iceCancelHelper and HasIceBlockAura()
     local castSkipActive, castRemain, castName, castId, castIceReady, castIceCD, castData, castShouldBlock = ActiveIceblockCastSkip()
     local skipActive, skipRemain, skipName, skipId, iceReady, iceCD = ActiveIceblockSkip()
@@ -3317,7 +3317,7 @@ function M.StealInfoText() return (M.stealHint and ("  |cff66ccff" .. M.stealHin
 -- Indicator above the rotation bar: the target's first stealable buff (icon, stacks, time left),
 -- orange border when it is on the worth list. Not secure, so it may change in combat.
 function M.CreateStealIndicator()
-    local f = CreateFrame("Frame", "MageHelperStealIndicator", KR)
+    local f = CreateFrame("Frame", "ClassHelperStealIndicator", KR)
     f:SetWidth(30); f:SetHeight(30)
     f:SetPoint("BOTTOMLEFT", KR, "TOPLEFT", 8, 4)
     f:EnableMouse(true)
@@ -3373,8 +3373,8 @@ function M.StealTooltip(self)
 end
 
 function M.StealModeText()
-    if not cfg.spellsteal then return L("MageHelper: Zauberraub AUS") end
-    return cfg.spellstealAll and L("MageHelper: Zauberraub AN (alle stehlbaren Buffs)") or L("MageHelper: Zauberraub AN (nur lohnende Buffs)")
+    if not cfg.spellsteal then return L("ClassHelper: Zauberraub AUS") end
+    return cfg.spellstealAll and L("ClassHelper: Zauberraub AN (alle stehlbaren Buffs)") or L("ClassHelper: Zauberraub AN (nur lohnende Buffs)")
 end
 
 -- =============================
@@ -4464,84 +4464,84 @@ function KR:PLAYER_DEAD()
     RefreshAnalyzerWindow()
 end
 
--- /mh and /magehelper, registered through AceConsole in MH:OnInitialize.
+-- /ch and /magehelper, registered through AceConsole in MH:OnInitialize.
 local function HandleSlash(msg)
     msg = msg or ""
     local cmd, arg = msg:match("^(%S*)%s*(.-)$")
     cmd = string.lower(cmd or "")
     if cmd == "show" then cfg.shown = true; KR:Show()
     elseif cmd == "hide" then cfg.shown = false; KR:Hide()
-    elseif cmd == "lock" then cfg.locked = true; print(L("MageHelper: Bar gesperrt"))
-    elseif cmd == "unlock" then cfg.locked = false; print(L("MageHelper: Bar verschiebbar"))
+    elseif cmd == "lock" then cfg.locked = true; print(L("ClassHelper: Bar gesperrt"))
+    elseif cmd == "unlock" then cfg.locked = false; print(L("ClassHelper: Bar verschiebbar"))
     elseif cmd == "buffs" then
         if arg == "show" or arg == "on" then cfg.buffBarShown = true; if buffBar then buffBar:Show() end
         elseif arg == "hide" or arg == "off" then cfg.buffBarShown = false; if buffBar then buffBar:Hide() end
-        elseif arg == "lock" then cfg.buffBarLocked = true; print(L("MageHelper: Buff-Bar gesperrt"))
-        elseif arg == "unlock" then cfg.buffBarLocked = false; print(L("MageHelper: Buff-Bar verschiebbar"))
-        else print("MageHelper: /mh buffs show|hide|lock|unlock") end
+        elseif arg == "lock" then cfg.buffBarLocked = true; print(L("ClassHelper: Buff-Bar gesperrt"))
+        elseif arg == "unlock" then cfg.buffBarLocked = false; print(L("ClassHelper: Buff-Bar verschiebbar"))
+        else print("ClassHelper: /ch buffs show|hide|lock|unlock") end
     elseif cmd == "comb" then
         local n = tonumber(arg)
-        if n then cfg.combustionLB = n; print(string.format(L("MageHelper: Combustion-LB-Fenster = %ss"), n)) end
+        if n then cfg.combustionLB = n; print(string.format(L("ClassHelper: Combustion-LB-Fenster = %ss"), n)) end
     elseif cmd == "skips" then
         if arg == "off" or arg == "aus" then
             cfg.bossSkips = false
-            print(L("MageHelper: Boss-Iceblock-Skips AUS"))
+            print(L("ClassHelper: Boss-Iceblock-Skips AUS"))
         else
             cfg.bossSkips = true
-            print(L("MageHelper: Boss-Iceblock-Skips AN"))
+            print(L("ClassHelper: Boss-Iceblock-Skips AN"))
         end
     elseif cmd == "utility" then
         if arg == "off" or arg == "aus" then
             cfg.iccUtility = false
-            print(L("MageHelper: ICC-Utility-Warnungen AUS"))
+            print(L("ClassHelper: ICC-Utility-Warnungen AUS"))
         else
             cfg.iccUtility = true
-            print(L("MageHelper: ICC-Utility-Warnungen AN"))
+            print(L("ClassHelper: ICC-Utility-Warnungen AN"))
         end
     elseif cmd == "icelead" then
         local n = tonumber(arg)
         if n then
             cfg.iceBlockLead = n
-            print(string.format(L("MageHelper: Eisblock-Vorlauf = %ss"), n))
+            print(string.format(L("ClassHelper: Eisblock-Vorlauf = %ss"), n))
         else
-            print("MageHelper: /mh icelead 1")
+            print("ClassHelper: /ch icelead 1")
         end
     elseif cmd == "icecancel" then
         if arg == "off" or arg == "aus" then
             cfg.iceCancelHelper = false
-            print(L("MageHelper: Eisblock-Abbruch-Hinweis AUS"))
+            print(L("ClassHelper: Eisblock-Abbruch-Hinweis AUS"))
         else
             cfg.iceCancelHelper = true
-            print(L("MageHelper: Eisblock-Abbruch-Hinweis AN"))
+            print(L("ClassHelper: Eisblock-Abbruch-Hinweis AN"))
         end
     elseif cmd == "buffet" then
         local n = tonumber(arg)
-        if n then cfg.buffetStacks = n; print(string.format(L("MageHelper: Mystic-Buffet-Eisblock ab %s Stacks"), n)) end
+        if n then cfg.buffetStacks = n; print(string.format(L("ClassHelper: Mystic-Buffet-Eisblock ab %s Stacks"), n)) end
     elseif cmd:match("^tr..nengas$") or cmd == "teargas" then -- tränengas (ä = 2 bytes, whatever lower() did to them) / traenengas
         local a = string.lower(arg or "")
         local n = tonumber((a:gsub(",", ".")))
         if a == "off" or a == "aus" then M.SetTearGas(false)
         elseif n then M.SetTearGas(true, n)
         elseif a == "on" or a == "an" then M.SetTearGas(true)
-        else print(L("/mh tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35")) end
-        if cfg.putricideInvis then print(string.format(L("MageHelper: Tränengas-Hilfe AN (Unsichtbarkeit %.1f%% über der Schwelle)"), M.TearGasLead()))
-        else print(L("MageHelper: Tränengas-Hilfe AUS")) end
+        else print(L("/ch tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35")) end
+        if cfg.putricideInvis then print(string.format(L("ClassHelper: Tränengas-Hilfe AN (Unsichtbarkeit %.1f%% über der Schwelle)"), M.TearGasLead()))
+        else print(L("ClassHelper: Tränengas-Hilfe AUS")) end
     elseif cmd == "instability" then
         local n = tonumber(arg)
-        if n then cfg.instabilityStacks = n; print(string.format(L("MageHelper: Instabilität-STOP ab %s Stacks"), n)) end
+        if n then cfg.instabilityStacks = n; print(string.format(L("ClassHelper: Instabilität-STOP ab %s Stacks"), n)) end
     elseif cmd == "debug" then
         local sub = string.lower(arg or "")
         if sub == "on" or sub == "an" then
             cfg.debugMode = true
-            print(L("MageHelper: Debug-Anzeige AN"))
+            print(L("ClassHelper: Debug-Anzeige AN"))
         elseif sub == "off" or sub == "aus" then
             cfg.debugMode = false
             if KR.debugInfo then KR.debugInfo:SetText("") end
-            print(L("MageHelper: Debug-Anzeige AUS"))
+            print(L("ClassHelper: Debug-Anzeige AUS"))
         else
             local h, r, n, id = HasHotStreak()
-            print(L("MageHelper Debug: Hot Streak erkannt="), h and L("JA") or L("NEIN"), " Name=", n or "-", " SpellID=", id or "-")
-            print(L("MageHelper Debug: /mh debug on für Live-Anzeige, /mh report für Fight-Report"))
+            print(L("ClassHelper Debug: Hot Streak erkannt="), h and L("JA") or L("NEIN"), " Name=", n or "-", " SpellID=", id or "-")
+            print(L("ClassHelper Debug: /ch debug on für Live-Anzeige, /ch report für Fight-Report"))
             for i=1,40 do
                 local bn, _, _, _, _, _, _, _, _, _, bid = UnitBuff("player", i)
                 if not bn then break end
@@ -4559,16 +4559,16 @@ local function HandleSlash(msg)
         elseif sub == "compare" or sub == "vergleich" then AnalyzerCompare()
         elseif sub == "boss" then AnalyzerReportLastBoss()
         elseif sub == "death" or sub == "tod" then AnalyzerShowDeathRecap()
-        else print("MageHelper Analyse: show|start|stop|a|b|compare|boss|death") end
+        else print("ClassHelper Analyse: show|start|stop|a|b|compare|boss|death") end
     elseif cmd == "report" then
         PrintFightReport(true)
     elseif cmd == "autoreport" then
-        if arg == "off" or arg == "aus" then cfg.reportOnFightEnd = false; print(L("MageHelper: Fight-Report nach Kampf AUS"))
-        else cfg.reportOnFightEnd = true; print(L("MageHelper: Fight-Report nach Kampf AN")) end
+        if arg == "off" or arg == "aus" then cfg.reportOnFightEnd = false; print(L("ClassHelper: Fight-Report nach Kampf AUS"))
+        else cfg.reportOnFightEnd = true; print(L("ClassHelper: Fight-Report nach Kampf AN")) end
     elseif cmd == "gloves" then
         cfg.useGloves = (arg ~= "off")
         RebuildSpellMacros()
-        print(cfg.useGloves and L("MageHelper: /use 10 aktiv") or L("MageHelper: /use 10 aus"))
+        print(cfg.useGloves and L("ClassHelper: /use 10 aktiv") or L("ClassHelper: /use 10 aus"))
     elseif cmd == "fm" then
         local sub = string.lower(arg or "")
         if sub == "" or sub == "list" or sub == "liste" then
@@ -4577,7 +4577,7 @@ local function HandleSlash(msg)
             if UnitExists("target") and UnitIsFriend("player", "target") and UnitIsPlayer("target") then
                 SetFocusMagicTarget(UnitName("target"), true)
             else
-                print(L("MageHelper: Bitte freundliches Ziel anwählen und /mh fm set nutzen"))
+                print(L("ClassHelper: Bitte freundliches Ziel anwählen und /ch fm set nutzen"))
             end
         elseif sub == "back" then
             BackToPartner()
@@ -4590,28 +4590,28 @@ local function HandleSlash(msg)
         local count = EquippedT9()
         local links = {}
         for _, link in pairs(BagT9()) do table.insert(links, link) end
-        print(string.format(L("MageHelper T9: %d Teile angelegt, in den Taschen: %s"), count, #links > 0 and table.concat(links, " ") or L("keine")))
+        print(string.format(L("ClassHelper T9: %d Teile angelegt, in den Taschen: %s"), count, #links > 0 and table.concat(links, " ") or L("keine")))
         local state, extra = MoltenState()
         print(string.format(L(M.MOLTEN_TIPS[state]), extra or 0))
     elseif cmd == "flask" then
         local key = M.FLASK_ALIASES[string.lower(arg or "")]
         if key then SetFlaskChoice(key) end
-        print(string.format(L("MageHelper: Flask = %s"), FlaskChoiceText()))
-        if not key then print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet")) end
+        print(string.format(L("ClassHelper: Flask = %s"), FlaskChoiceText()))
+        if not key then print(L("/ch flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet")) end
     elseif cmd == "trank" or cmd == "potion" then
         local key = M.POTION_ALIASES[string.lower(arg or "")]
         if key then M.SetPotionChoice(key) end
-        print(string.format(L("MageHelper: Trank = %s"), M.PotionChoiceText()))
-        if not key then print(L("/mh trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste")) end
+        print(string.format(L("ClassHelper: Trank = %s"), M.PotionChoiceText()))
+        if not key then print(L("/ch trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste")) end
     elseif cmd == "theme" or cmd == "farbe" or cmd == "farbschema" then
         local aliases = { standard = "standard", pink = "pink", rosa = "pink", blue = "blue", blau = "blue", red = "red", rot = "red" }
         local key = aliases[string.lower(arg or "")]
         if key then
             cfg.theme = key
             ApplyTheme()
-            print(string.format(L("MageHelper: Farbschema = %s"), L(M.THEME_NAMES[key])))
+            print(string.format(L("ClassHelper: Farbschema = %s"), L(M.THEME_NAMES[key])))
         else
-            print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
+            print(L("/ch theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
         end
     elseif cmd == "config" or cmd == "options" or cmd == "optionen" then
         MH:OpenOptions()
@@ -4620,18 +4620,18 @@ local function HandleSlash(msg)
         local mode = aliases[string.lower(arg or "")]
         if mode then
             cfg.rotationMode = mode
-            if not M.ApplyRotaMode() then print(L("MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
+            if not M.ApplyRotaMode() then print(L("ClassHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
         end
-        print(string.format(L("MageHelper: Rota = %s"), M.RotaModeText()))
-        if not mode then print(L("/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)")) end
+        print(string.format(L("ClassHelper: Rota = %s"), M.RotaModeText()))
+        if not mode then print(L("/ch rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)")) end
     elseif cmd == "burn" then
         local sub, pct = string.match(string.lower(arg or ""), "^(%a*)%s*(%d*)")
         if sub == "auto" or sub == "mana" then cfg.arcaneBurnMode = sub end
         pct = tonumber(pct)
         if pct then cfg.arcaneBurnMana = math.max(10, math.min(90, pct)) end
         M.ResetBurnState() -- decide again with the new setting
-        print(string.format(L("MageHelper: Burn-Modus = %s, Mana-Schwelle %d%%"), cfg.arcaneBurnMode == "mana" and L("Nur nach Mana") or L("Automatisch (Zeit bis zum Tod gegen Mana)"), cfg.arcaneBurnMana))
-        if sub ~= "auto" and sub ~= "mana" and not pct then print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana")) end
+        print(string.format(L("ClassHelper: Burn-Modus = %s, Mana-Schwelle %d%%"), cfg.arcaneBurnMode == "mana" and L("Nur nach Mana") or L("Automatisch (Zeit bis zum Tod gegen Mana)"), cfg.arcaneBurnMana))
+        if sub ~= "auto" and sub ~= "mana" and not pct then print(L("/ch burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana")) end
     elseif cmd == "raub" or cmd == "steal" or cmd == "zauberraub" or cmd == "spellsteal" then
         local sub = string.lower(arg or "")
         local known = true
@@ -4642,49 +4642,49 @@ local function HandleSlash(msg)
         else known = false end
         M.RescanSteal()
         print(M.StealModeText())
-        if not known then print(L("/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)")) end
+        if not known then print(L("/ch raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)")) end
     elseif cmd == "lang" or cmd == "sprache" then
         local sub = string.lower(arg or "")
         if sub == "de" or sub == "en" or sub == "auto" then
             cfg.language = sub
             ApplyLanguageSetting()
-            print(string.format(L("MageHelper: Sprache = %s (Buttons und Fenster nach /reload)"), sub))
+            print(string.format(L("ClassHelper: Sprache = %s (Buttons und Fenster nach /reload)"), sub))
         else
-            print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
+            print(L("/ch lang auto|de|en - Sprache (auto = Client-Sprache)"))
         end
     elseif cmd == "help" or cmd == "" then
-        print(L("MageHelper Befehle:"))
-        print(L("/mh config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"))
-        print(L("/mh show|hide - Bar an/aus"))
-        print(L("/mh lock|unlock - Bar sperren/verschieben"))
-        print(L("/mh comb 10 - benötigte LB-Restzeit für Einäschern"))
-        print(L("/mh gloves on|off - /use 10 in Spellbuttons"))
-        print(L("/mh buffs show|hide|lock|unlock - zweite Buff-Bar"))
-        print(L("/mh fm - MF-Ziel-Auswahl öffnen"))
-        print(L("/mh fm set|NAME - Ziel bzw. NAME als MF-Partner speichern"))
-        print(L("/mh fm back|clear - zurück zum Partner / alles löschen"))
-        print(L("/mh skips on|off - Eisblock-Bossmechaniken an/aus"))
-        print(L("/mh icelead 1 - Eisblock bei Boss-Casts 1 Sekunde vor Einschlag anzeigen"))
-        print(L("/mh icecancel on|off - Nach Eisblock Abbruch-Hinweis anzeigen"))
-        print(L("/mh utility on|off - ICC-Utility: Sindra/Putri/BQ/Lady an/aus"))
-        print(L("/mh buffet 5 - Mystic Buffet Eisblock ab X Stacks"))
-        print(L("/mh instability 5 - Stopcasting ab X Instabilität-Stapeln"))
-        print(L("/mh tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35"))
-        print(L("/mh debug on|off - Live-Debug: warum empfiehlt das Addon etwas"))
-        print(L("/mh debug - Hot-Streak/Buffnamen einmal ausgeben"))
+        print(L("ClassHelper Befehle:"))
+        print(L("/ch config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"))
+        print(L("/ch show|hide - Bar an/aus"))
+        print(L("/ch lock|unlock - Bar sperren/verschieben"))
+        print(L("/ch comb 10 - benötigte LB-Restzeit für Einäschern"))
+        print(L("/ch gloves on|off - /use 10 in Spellbuttons"))
+        print(L("/ch buffs show|hide|lock|unlock - zweite Buff-Bar"))
+        print(L("/ch fm - MF-Ziel-Auswahl öffnen"))
+        print(L("/ch fm set|NAME - Ziel bzw. NAME als MF-Partner speichern"))
+        print(L("/ch fm back|clear - zurück zum Partner / alles löschen"))
+        print(L("/ch skips on|off - Eisblock-Bossmechaniken an/aus"))
+        print(L("/ch icelead 1 - Eisblock bei Boss-Casts 1 Sekunde vor Einschlag anzeigen"))
+        print(L("/ch icecancel on|off - Nach Eisblock Abbruch-Hinweis anzeigen"))
+        print(L("/ch utility on|off - ICC-Utility: Sindra/Putri/BQ/Lady an/aus"))
+        print(L("/ch buffet 5 - Mystic Buffet Eisblock ab X Stacks"))
+        print(L("/ch instability 5 - Stopcasting ab X Instabilität-Stapeln"))
+        print(L("/ch tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35"))
+        print(L("/ch debug on|off - Live-Debug: warum empfiehlt das Addon etwas"))
+        print(L("/ch debug - Hot-Streak/Buffnamen einmal ausgeben"))
         print(L("v1.8: Hot Streak/Pyro hat Vorrang vor LB-Refresh, auch wenn LB gerade explodiert ist."))
-        print(L("/mh analyse - Analysefenster öffnen (oder A-Icon unter der Minimap)"))
-        print(L("/mh analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"))
-        print(L("/mh report - letzten/aktuellen Fight-Report ausgeben"))
-        print(L("/mh autoreport on|off - Report nach Kampf an/aus"))
-        print(L("/mh t9 - T9-Teile und Status für Glühende Rüstung anzeigen"))
-        print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
-        print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
-        print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
-        print(L("/mh trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste"))
-        print(L("/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"))
-        print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"))
-        print(L("/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"))
+        print(L("/ch analyse - Analysefenster öffnen (oder A-Icon unter der Minimap)"))
+        print(L("/ch analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"))
+        print(L("/ch report - letzten/aktuellen Fight-Report ausgeben"))
+        print(L("/ch autoreport on|off - Report nach Kampf an/aus"))
+        print(L("/ch t9 - T9-Teile und Status für Glühende Rüstung anzeigen"))
+        print(L("/ch lang auto|de|en - Sprache (auto = Client-Sprache)"))
+        print(L("/ch theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
+        print(L("/ch flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
+        print(L("/ch trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste"))
+        print(L("/ch rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"))
+        print(L("/ch burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"))
+        print(L("/ch raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"))
     end
 end
 
@@ -4692,16 +4692,16 @@ end
 -- Ace3: startup, settings (AceDB profiles), options window
 -- =============================
 
--- Settings from MageHelper <= 2.3 were one flat per-character table. The update renamed it to
--- MageHelperLegacyDB in each character's SavedVariables file; a flat MageHelperDB (rename missed)
+-- Settings from ClassHelper <= 2.3 were one flat per-character table. The update renamed it to
+-- ClassHelperLegacyDB in each character's SavedVariables file; a flat ClassHelperDB (rename missed)
 -- is recognised too. Copied once into this character's profile / char data, then dropped.
 local function TakeLegacySettings()
-    local legacy = MageHelperLegacyDB
-    if type(MageHelperDB) == "table" and MageHelperDB.profiles == nil and MageHelperDB.profileKeys == nil and MageHelperDB.shown ~= nil then
-        legacy = legacy or MageHelperDB
-        MageHelperDB = nil
+    local legacy = ClassHelperLegacyDB
+    if type(ClassHelperDB) == "table" and ClassHelperDB.profiles == nil and ClassHelperDB.profileKeys == nil and ClassHelperDB.shown ~= nil then
+        legacy = legacy or ClassHelperDB
+        ClassHelperDB = nil
     end
-    MageHelperLegacyDB = nil
+    ClassHelperLegacyDB = nil
     return legacy
 end
 
@@ -4725,11 +4725,11 @@ local function SetupOptions(db)
     local function toggle(name, order, setter) return { type = "toggle", name = name, order = order, width = "full", set = setter } end
     local function range(name, order, min, max, step) return { type = "range", name = name, order = order, min = min, max = max, step = step, width = "double" } end
     local function inCombat()
-        if InCombatLockdown() then print(L("MageHelper: Einstellungen sind im Kampf gesperrt.")); return true end
+        if InCombatLockdown() then print(L("ClassHelper: Einstellungen sind im Kampf gesperrt.")); return true end
     end
 
     local options = {
-        type = "group", name = "MageHelper",
+        type = "group", name = "ClassHelper",
         args = {
             general = { type = "group", name = L("Allgemein"), order = 1, get = get, set = set, args = {
                 shown = toggle(L("Rota-Leiste anzeigen"), 1, function(_, v) cfg.shown = v; if v then KR:Show() else KR:Hide() end end),
@@ -4777,7 +4777,7 @@ local function SetupOptions(db)
                     end,
                     set = function(_, v)
                         cfg.rotationMode = v
-                        if not M.ApplyRotaMode() then print(L("MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
+                        if not M.ApplyRotaMode() then print(L("ClassHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
                     end },
                 combustionLB = range(L("LB-Restzeit für Einäschern (Sekunden)"), 1, 0, 12, 1),
                 showMovementFireBlast = toggle(L("Feuerschlag in Bewegung vorschlagen"), 2),
@@ -4846,7 +4846,7 @@ local function SetupOptions(db)
     }
     options.args.profiles.order = 10
     LibStub("AceConfig-3.0"):RegisterOptionsTable(ADDON, options)
-    optionsFrame = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(ADDON, "MageHelper")
+    optionsFrame = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(ADDON, "ClassHelper")
 end
 
 function MH:OpenOptions()
@@ -4883,7 +4883,7 @@ function MH:OnInitialize()
     local legacy = TakeLegacySettings()
     -- No default profile name: every character starts with its own profile ("Name - Realm");
     -- profiles can be shared or copied in the options window.
-    self.db = LibStub("AceDB-3.0"):New("MageHelperDB", defaults)
+    self.db = LibStub("AceDB-3.0"):New("ClassHelperDB", defaults)
     ApplyLegacySettings(self.db, legacy)
     cfg, chr = self.db.profile, self.db.char
     ApplyLanguageSetting()
@@ -4893,6 +4893,9 @@ function MH:OnInitialize()
     self.db.RegisterCallback(self, "OnProfileCopied", "ApplyProfile")
     self.db.RegisterCallback(self, "OnProfileReset", "ApplyProfile")
     SetupOptions(self.db)
+    self:RegisterChatCommand("ch", HandleSlash)
+    self:RegisterChatCommand("classhelper", HandleSlash)
+    -- old commands from the MageHelper days keep working
     self:RegisterChatCommand("mh", HandleSlash)
     self:RegisterChatCommand("magehelper", HandleSlash)
 end
@@ -4920,7 +4923,7 @@ function MH:OnEnable()
     end, 5)
     KR:SetScript("OnUpdate", PulseRecommendationButtons) -- glow pulse every frame
     self:ScheduleRepeatingTimer(UpdateDisplay, 0.1)        -- recommendation + buff bar 10x per second
-    print(string.format(L("|cffff7d0aMageHelper v%s|r geladen. /mh help"), GetAddOnMetadata(ADDON, "Version") or "?"))
+    print(string.format(L("|cffff7d0aClassHelper v%s|r geladen. /ch help"), GetAddOnMetadata(ADDON, "Version") or "?"))
 end
 
 

@@ -1,4 +1,4 @@
-# Smoke test: loads MageHelper (TOC order, incl. embedded Ace3) in Lua 5.1 against tools/wowstub.lua,
+# Smoke test: loads ClassHelper (TOC order, incl. embedded Ace3) in Lua 5.1 against tools/wowstub.lua,
 # once as deDE and once as enUS client, and runs scenarios with check() assertions.
 # Usage (from the addon folder, with lupa installed):
 #   python -I tools/smoke.py [-v]
@@ -22,7 +22,7 @@ def toc_files():
                 add(m.group(2), os.path.dirname(p))
         else:
             files.append(p)
-    for line in open(os.path.join(ROOT, "MageHelper.toc"), encoding="utf-8"):
+    for line in open(os.path.join(ROOT, "ClassHelper.toc"), encoding="utf-8"):
         line = line.strip()
         if line.startswith("## Version:"): version = line.split(":", 1)[1].strip()
         elif line and not line.startswith("#"): add(line, ROOT)
@@ -37,22 +37,23 @@ return { shown = true, combustionLB = 7, x = 50, y = -100, focusMagicTarget = "A
 '''
 
 COMMON = r'''
-MH = LibStub("AceAddon-3.0"):GetAddon("MageHelper")
+MH = LibStub("AceAddon-3.0"):GetAddon("ClassHelper")
 function check(cond, msg) if not cond then error("CHECK FAILED: " .. msg, 2) end end
-function Slash(cmd) SlashCmdList.ACECONSOLE_MH(cmd) end
+function Slash(cmd) SlashCmdList.ACECONSOLE_CH(cmd) end
 '''
 
-# Legacy settings were taken over (variant: MageHelperLegacyDB for deDE, flat MageHelperDB for enUS).
+# Legacy settings were taken over (variant: ClassHelperLegacyDB for deDE, flat ClassHelperDB for enUS).
 MIGRATION = r'''
 local p, c = MH.db.profile, MH.db.char
-check(MageHelperLegacyDB == nil, "legacy table dropped")
-check(MageHelperDB.profiles ~= nil, "MageHelperDB is an AceDB database")
+check(ClassHelperLegacyDB == nil, "legacy table dropped")
+check(ClassHelperDB.profiles ~= nil, "ClassHelperDB is an AceDB database")
 check(p.combustionLB == 7 and p.x == 50 and p.iceBlockLead == 1.5, "profile settings taken over")
 check(c.focusMagicTarget == "Anya" and c.focusMagicPartner == "Anya", "FM target taken over and used as partner")
 check(c.moltenT9Legs == nil and c.moltenStep == nil and p.moltenT9Legs == nil, "old leg-name settings are dropped")
 check(type(c.moltenSwap) == "table" and p.moltenT9 == true, "T9 swap defaults")
 check(c.analyzer.bossFights[1].name == "Lord Mark'gar", "analyzer data per character")
 check(MH.db:GetCurrentProfile() == "Kahuchan - Rising-Gods", "own profile per character: " .. MH.db:GetCurrentProfile())
+check(SlashCmdList.ACECONSOLE_CH and SlashCmdList.ACECONSOLE_CLASSHELPER and SlashCmdList.ACECONSOLE_MH and SlashCmdList.ACECONSOLE_MAGEHELPER, "/ch, /classhelper and the old /mh, /magehelper are registered")
 OUT[#OUT + 1] = "MIGRATION OK"
 '''
 
@@ -75,12 +76,12 @@ FireEvent("PLAYER_DEAD")
 for _, cmd in ipairs({"", "help", "lock", "unlock", "buffs lock", "comb 9", "skips off", "skips on", "utility off", "icelead 1.5", "icecancel off", "buffet 4", "instability 6", "debug", "debug on", "debug off", "analyse start", "analyse stop", "analyse a", "analyse b", "analyse compare", "analyse boss", "analyse death", "report", "autoreport off", "gloves off", "gloves on", "fm Partner", "fm clear", "fm", "molten", "molten reset", "lang", "analyse", "config"}) do
   Slash(cmd)
 end
-check(OPTIONS_OPENED ~= nil, "/mh config opens the options panel")
-for _, n in ipairs({"MageHelperOneButton", "MageHelperMinimapButton", "MageHelperBuffMinimapButton", "MageHelperAnalyzerMinimapButton", "MageHelperBuff_FMSet", "MageHelperBuff_armor", "MageHelperBuff_brilliance", "MageHelperBuff_fmin", "MageHelperBuff_fmout", "MageHelperBuff_flask", "MageHelperBuff_potion"}) do
+check(OPTIONS_OPENED ~= nil, "/ch config opens the options panel")
+for _, n in ipairs({"ClassHelperOneButton", "ClassHelperMinimapButton", "ClassHelperBuffMinimapButton", "ClassHelperAnalyzerMinimapButton", "ClassHelperBuff_FMSet", "ClassHelperBuff_armor", "ClassHelperBuff_brilliance", "ClassHelperBuff_fmin", "ClassHelperBuff_fmout", "ClassHelperBuff_flask", "ClassHelperBuff_potion"}) do
   local f = FRAMES[n]; if f and f.__scripts.OnEnter then f.__scripts.OnEnter(f) end
 end
-FRAMES.MageHelperOneButton.__scripts.OnClick(FRAMES.MageHelperOneButton)
-FRAMES.MageHelperAnalyzerMinimapButton.__scripts.OnClick(FRAMES.MageHelperAnalyzerMinimapButton, "RightButton")
+FRAMES.ClassHelperOneButton.__scripts.OnClick(FRAMES.ClassHelperOneButton)
+FRAMES.ClassHelperAnalyzerMinimapButton.__scripts.OnClick(FRAMES.ClassHelperAnalyzerMinimapButton, "RightButton")
 upd()
 check(MH.db.profile.combustionLB == 9, "slash commands write into the profile")
 '''
@@ -88,7 +89,7 @@ check(MH.db.profile.combustionLB == 9, "slash commands write into the profile")
 # Combat log in the 3.3.5 layout (no hideCaster, no raid flags):
 #   timestamp, event, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, <event params>
 COMBATLOG = r'''
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 local function CL(...) FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, ...) end
 local ME, BOSS, OTHER = "GUID-player", "GUID-boss", "GUID-Anya"
 local MEF, BOSSF, OTHERF = 0x511, 0xa48, 0x514
@@ -165,9 +166,9 @@ OUT[#OUT + 1] = "COMBATLOG OK"
 # Options window (AceConfig validates the table) and profile switching.
 OPTIONS = r'''
 -- With a uiType, AceConfigRegistry validates the table and errors on a malformed option.
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 check(type(o) == "table", "options table registered and valid")
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 o.args.rotation.set({ "rotation", "combustionLB" }, 8)
 check(MH.db.profile.combustionLB == 8, "range option writes profile")
 o.args.general.args.shown.set({ "general", "shown" }, false)
@@ -175,9 +176,9 @@ check(not KR.__shown and MH.db.profile.shown == false, "hide bar via options")
 o.args.general.args.shown.set({ "general", "shown" }, true)
 check(KR.__shown, "show bar via options")
 o.args.rotation.args.useGloves.set({ "rotation", "useGloves" }, false)
-check(not FRAMES.MageHelperButton_fireball.__attr.macrotext:find("/use 10", 1, true), "gloves off rebuilds macros")
+check(not FRAMES.ClassHelperButton_fireball.__attr.macrotext:find("/use 10", 1, true), "gloves off rebuilds macros")
 o.args.rotation.args.useGloves.set({ "rotation", "useGloves" }, true)
-check(FRAMES.MageHelperButton_fireball.__attr.macrotext:find("/use 10", 1, true), "gloves on rebuilds macros")
+check(FRAMES.ClassHelperButton_fireball.__attr.macrotext:find("/use 10", 1, true), "gloves on rebuilds macros")
 o.args.focusMagic.args.partner.set({ "focusMagic", "partner" }, " Anya ")
 check(MH.db.char.focusMagicPartner == "Anya", "FM partner via options")
 check(type(o.args.focusMagic.args.status.name()) == "string", "FM status text")
@@ -210,10 +211,10 @@ RAID = {
 }
 AURAS.raid5 = { { "Focus Magic", 0, nil, 54646, "raid2" } }
 INCOMBAT = false
-if FRAMES.MageHelperFMPicker then FRAMES.MageHelperFMPicker:Hide() end -- the main scenario may have opened it
+if FRAMES.ClassHelperFMPicker then FRAMES.ClassHelperFMPicker:Hide() end -- the main scenario may have opened it
 Slash("fm")
-local P = FRAMES.MageHelperFMPicker
-check(P and P.__shown, "picker opens with /mh fm")
+local P = FRAMES.ClassHelperFMPicker
+check(P and P.__shown, "picker opens with /ch fm")
 for i = 1, 40 do
   Tick(0.4)
   if INSPECT_PENDING then INSPECT_PENDING = false; FireEvent("INSPECT_TALENT_READY") end
@@ -233,22 +234,22 @@ check(INSPECT_COUNT == 3, "inspected healing classes in range, got " .. INSPECT_
 local function setFilter(name, on)
   local cb = FRAMES[name]; cb:SetChecked(on); cb.__scripts.OnClick(cb)
 end
-setFilter("MageHelperFMFilterHealers", true); dump("healers")
+setFilter("ClassHelperFMFilterHealers", true); dump("healers")
 -- Bheal healer; Ehpala/Gsham unknown (shown as Healer?); Cshadow is shadow; Dresto already has FM
 check(shownNames() == "Bheal,Ehpala,Gsham", "healers without FM: " .. shownNames())
-setFilter("MageHelperFMFilterHealers", false); setFilter("MageHelperFMFilterMages", true); dump("mages")
+setFilter("ClassHelperFMFilterHealers", false); setFilter("ClassHelperFMFilterMages", true); dump("mages")
 check(shownNames() == "Anya", "only mages: " .. shownNames())
-setFilter("MageHelperFMFilterMages", false)
+setFilter("ClassHelperFMFilterMages", false)
 
 local C = MH.db.char
 local function rowFor(name) for _, r in ipairs(P.rows) do if r.__shown and r.entryName == name then return r end end end
-local function fmMacro() return FRAMES.MageHelperBuff_fmout.__attr.macrotext end
+local function fmMacro() return FRAMES.ClassHelperBuff_fmout.__attr.macrotext end
 rowFor("Anya").partnerButton.__scripts.OnClick()
 check(C.focusMagicPartner == "Anya" and fmMacro():find("/targetexact Anya", 1, true), "partner Anya set and used by FM OUT")
 rowFor("Bheal").targetButton.__scripts.OnClick()
 check(C.focusMagicTarget == "Bheal" and C.focusMagicPartner == "Anya", "temporary target keeps partner")
 check(fmMacro():find("/targetexact Bheal", 1, true), "FM OUT now targets Bheal")
-OUT[#OUT + 1] = "LABEL " .. FRAMES.MageHelperBuffBar.fmTargetText.__text
+OUT[#OUT + 1] = "LABEL " .. FRAMES.ClassHelperBuffBar.fmTargetText.__text
 OUT[#OUT + 1] = "STATUS " .. P.status.__text
 P.backButton.__scripts.OnClick()
 check(C.focusMagicTarget == "Anya" and fmMacro():find("/targetexact Anya", 1, true), "back to partner")
@@ -266,7 +267,7 @@ OUT[#OUT + 1] = "PICKER OK"
 
 # Molten Armor with the T9 2-piece bonus: equip from bags by ID, cast, swap back, colors.
 T9 = r'''
-local B = FRAMES.MageHelperBuff_armor
+local B = FRAMES.ClassHelperBuff_armor
 local de = GetLocale() == "deDE"
 local L_T9_ON, L_T9_CAST, L_ARMOR = de and "T9 an" or "T9 on", de and "Casten" or "Cast", de and "Rüstung" or "Armor"
 local MOLTEN = GetSpellInfo(43046)
@@ -414,28 +415,28 @@ OUT[#OUT + 1] = "T9 OK"
 
 # Color themes: panels, titles, labels and MF SET follow the theme; signal colors stay.
 THEMES = r'''
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 local function rgb(t) return string.format("%.2f,%.2f,%.2f", t[1], t[2], t[3]) end
 check(MH.db.profile.theme == "standard" and rgb(KR.bg.__rgba) == "0.00,0.00,0.00" and KR.bg.__rgba[4] == 0.35, "standard look unchanged")
 check(not KR.themeStripe.__shown, "no stripe in standard")
 Slash("theme rosa")
-check(MH.db.profile.theme == "pink", "/mh theme rosa")
+check(MH.db.profile.theme == "pink", "/ch theme rosa")
 check(rgb(KR.bg.__rgba) == "0.13,0.03,0.10" and KR.bg.__rgba[4] == 0.55, "bar background pink, more opaque")
 check(KR.themeStripe.__shown and rgb(KR.themeStripe.__vc) == "1.00,0.42,0.74", "pink accent stripe")
-check(rgb(FRAMES.MageHelperBuffBar.title.__tc) == "1.00,0.62,0.86", "buff bar title pink")
-check(rgb(FRAMES.MageHelperBuff_FMSet.bg.__vc) == "0.58,0.10,0.40", "MF SET button pink")
-check(rgb(FRAMES.MageHelperAnalyzerWindow.bg.__rgba) == "0.13,0.03,0.10" and FRAMES.MageHelperAnalyzerWindow.bg.__rgba[4] == 0.78, "analyzer window keeps its alpha")
+check(rgb(FRAMES.ClassHelperBuffBar.title.__tc) == "1.00,0.62,0.86", "buff bar title pink")
+check(rgb(FRAMES.ClassHelperBuff_FMSet.bg.__vc) == "0.58,0.10,0.40", "MF SET button pink")
+check(rgb(FRAMES.ClassHelperAnalyzerWindow.bg.__rgba) == "0.13,0.03,0.10" and FRAMES.ClassHelperAnalyzerWindow.bg.__rgba[4] == 0.78, "analyzer window keeps its alpha")
 Tick(0.15)
-check(rgb(FRAMES.MageHelperButton_pyro.text.__tc) == "1.00,0.84,0.94", "button labels use theme text color")
+check(rgb(FRAMES.ClassHelperButton_pyro.text.__tc) == "1.00,0.84,0.94", "button labels use theme text color")
 -- signal colors are independent of the theme
-local s = FRAMES.MageHelperBuff_flask.status.__vc
+local s = FRAMES.ClassHelperBuff_flask.status.__vc
 Slash("theme red"); Tick(0.15)
-check(rgb(FRAMES.MageHelperBuff_flask.status.__vc) == rgb(s), "signal color unchanged by theme")
+check(rgb(FRAMES.ClassHelperBuff_flask.status.__vc) == rgb(s), "signal color unchanged by theme")
 check(rgb(KR.themeStripe.__vc) == "0.80,0.24,0.38", "red theme uses the wine accent")
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 o.args.general.args.theme.set({ "general", "theme" }, "blue")
 check(rgb(KR.bg.__rgba) == "0.02,0.06,0.16", "theme via options")
-Slash("fm"); local P = FRAMES.MageHelperFMPicker
+Slash("fm"); local P = FRAMES.ClassHelperFMPicker
 check(rgb(P.bg.__rgba) == "0.02,0.06,0.16" and rgb(P.title.__tc) == "0.55,0.80,1.00", "picker created later gets the theme")
 P:Hide()
 MH.db:SetProfile("Themes"); check(rgb(KR.bg.__rgba) == "0.00,0.00,0.00", "profile switch applies its theme")
@@ -445,7 +446,7 @@ OUT[#OUT + 1] = "THEMES OK"
 
 # Flask choice: auto by class/spec, fixed flask, any flask; matched by buff ID.
 FLASK = r'''
-local F = FRAMES.MageHelperBuff_flask
+local F = FRAMES.ClassHelperBuff_flask
 local C = MH.db.char
 local function active() Tick(0.15); return F.timer.__text ~= "!" end
 local function useFlask(buffId) AURAS.player = { { GetSpellInfo(buffId) or "Flask", 0, GetTime() + 3600, buffId } } end
@@ -465,7 +466,7 @@ check(active(), "protection warrior: Stoneblood in auto")
 PLAYER_CLASS, PLAYER_TALENTS = "PALADIN", { 51, 5, 15 }; Slash("flask auto"); useFlask(53755)
 check(active(), "holy paladin: Frost Wyrm in auto")
 check(tostring(F.icon.__tex):find("item46376", 1, true), "icon follows the expected flask: " .. tostring(F.icon.__tex))
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 check(o.args.general.args.flask.values().stoneblood ~= nil, "options list the flasks")
 o.args.general.args.flask.set({ "general", "flask" }, "stoneblood")
 check(C.flask == "stoneblood", "flask via options")
@@ -487,7 +488,7 @@ OUT[#OUT + 1] = "FLASK OK"
 
 # T10 links not readable at login: the count cached as 0 is dropped once 5 s after login.
 T10LOGIN = r'''
-local function reco() return FRAMES.MageHelperOneButton.currentKey end
+local function reco() return FRAMES.ClassHelperOneButton.currentKey end
 PLAYER_TALENTS = { 57, 3, 11 }; FireEvent("PLAYER_TALENT_UPDATE")
 INCOMBAT, TARGETNAME, EQUIPPED = true, "Dummy", {}
 Tick(0.15); Tick(0.15)
@@ -497,19 +498,19 @@ for i = 1, 34 do Tick(0.15) end   -- links arrive without UNIT_INVENTORY_CHANGED
 check(reco() == "mirror", "T10 recounted 5 s after login (" .. tostring(reco()) .. ")")
 INCOMBAT, TARGETNAME, EQUIPPED, PLAYER_TALENTS = false, nil, {}, nil
 FireEvent("UNIT_INVENTORY_CHANGED", "player"); FireEvent("PLAYER_TALENT_UPDATE"); Tick(0.15)
-check(FRAMES.MageHelperButton_lb.__shown, "back to Fire after the login check")
+check(FRAMES.ClassHelperButton_lb.__shown, "back to Fire after the login check")
 OUT[#OUT + 1] = "T10LOGIN OK"
 '''
 
 # Arcane rotation: auto mode by talents, button set, cooldowns, gem/Evocation, Missile Barrage,
 # burn vs conserve (mana threshold and time-to-die estimate), movement, switching back to Fire.
 ARCANE = r'''
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 local de = GetLocale() == "deDE"
 local function upd(n) for i = 1, (n or 8) do Tick(0.15) end end   -- 1.2 s: burn/conserve is re-decided every second
-local function reco() return FRAMES.MageHelperOneButton.currentKey end
-local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
-local function macro(k) return FRAMES["MageHelperButton_" .. k].__attr.macrotext end
+local function reco() return FRAMES.ClassHelperOneButton.currentKey end
+local function shown(k) return FRAMES["ClassHelperButton_" .. k].__shown end
+local function macro(k) return FRAMES["ClassHelperButton_" .. k].__attr.macrotext end
 local function S(id) return (GetSpellInfo(id)) end
 local AP, POM, MI, IV, EVO, BARR = S(12042), S(12043), S(55342), S(12472), S(12051), S(44781)
 local function state(mana, stacks)
@@ -532,7 +533,7 @@ local function drain(hpPerSec, seconds, o)   -- o: boss = boss1-4 %/s, mana = ma
   return #recos - 1   -- number of recommendation changes
 end
 local function debug() return KR.debugInfo.__text end
-local function btnState(k) return FRAMES["MageHelperButton_" .. k].state end
+local function btnState(k) return FRAMES["ClassHelperButton_" .. k].state end
 local function newFight()
   INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd(1)
   INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
@@ -558,7 +559,7 @@ local sec = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
 sec:SetParent(holder); sec:SetPoint("LEFT", anchor, "RIGHT")
 INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); state(30000, 0); upd()
 -- the stub blocks protected frames in combat like the client (every scenario must avoid it)
-check(not pcall(FRAMES.MageHelperButton_ab.Hide, FRAMES.MageHelperButton_ab), "stub: secure button Hide() blocked in combat")
+check(not pcall(FRAMES.ClassHelperButton_ab.Hide, FRAMES.ClassHelperButton_ab), "stub: secure button Hide() blocked in combat")
 check(not pcall(KR.SetWidth, KR, 100), "stub: main bar SetWidth() blocked in combat")
 check(not pcall(KR.SetHeight, KR, 50), "stub: main bar SetHeight() blocked in combat")
 check(not pcall(KR.SetScale, KR, 1.2), "stub: main bar SetScale() blocked in combat")
@@ -591,7 +592,7 @@ for _, n in ipairs({ AP, POM, MI, IV, EVO }) do COOLDOWNS[n] = 100 end
 
 -- burn/conserve by mana threshold
 Slash("burn mana 35")
-check(MH.db.profile.arcaneBurnMode == "mana" and MH.db.profile.arcaneBurnMana == 35, "/mh burn mana 35")
+check(MH.db.profile.arcaneBurnMode == "mana" and MH.db.profile.arcaneBurnMana == 35, "/ch burn mana 35")
 state(30000, 0); upd(); check(reco() == "ab", "full mana: Arcane Blast")
 state(30000, 4); upd(); check(reco() == "ab", "burn: Arcane Blast also at 4 stacks")
 AURAS.player = { { S(44401), 0, nil, 44401 } }; upd()
@@ -643,14 +644,14 @@ check(reco() ~= "abarr", "moving without a target: no Arcane Barrage (" .. tostr
 -- moving without any instant: no cast at all (never Evocation, Missiles or Blast), only a hint
 KNOWN[44781], NOTARGET, COOLDOWNS[EVO] = false, nil, nil
 AURAS.player = { { S(44401), 0, nil, 44401 } }; state(6000, 0); upd()
-check(reco() == nil and FRAMES.MageHelperOneButton.dynamicMacroText == nil, "moving without instants: no cast recommendation (" .. tostring(reco()) .. ")")
+check(reco() == nil and FRAMES.ClassHelperOneButton.dynamicMacroText == nil, "moving without instants: no cast recommendation (" .. tostring(reco()) .. ")")
 check(btnState("evo") == "normal" and btnState("am") == "normal" and btnState("ab") == "normal", "moving without instants: no cast button lit")
 check(KR.info.__text:find(de and "Bewegung" or "Moving", 1, true), "moving without instants: move hint (" .. KR.info.__text .. ")")
 AURAS.player = { { S(12043), 0, nil, 12043 } }; upd()
 check(reco() == "ab", "moving with Presence of Mind up: instant Arcane Blast (" .. tostring(reco()) .. ")")
 AURAS.player, KNOWN[44781], COOLDOWNS[EVO] = {}, nil, 100
 MOVING = false; state(20000, 0); upd()
-check(reco() == "ab" and FRAMES.MageHelperOneButton.dynamicMacroText ~= nil, "standing again: one-button back")
+check(reco() == "ab" and FRAMES.ClassHelperOneButton.dynamicMacroText ~= nil, "standing again: one-button back")
 MOVING, COOLDOWNS[FB], NOTARGET = false, nil, nil
 OUT[#OUT + 1] = "ARCANE INFO " .. KR.info.__text
 
@@ -667,7 +668,7 @@ check(report:find(de and "Spiegelbilder" or "Mirror Images", 1, true), "Arcane f
 -- mana lasts until the boss dies. Every case starts a fresh fight (the drain is measured per fight).
 -- Evocation 4 min, gem in the bags: restore spread ~75 + ~29 mana/s; model drain ~215 mana/s.
 Slash("burn auto"); Slash("debug on")
-check(MH.db.profile.arcaneBurnMode == "auto" and MH.db.profile.arcaneBurnMana == 35, "/mh burn auto keeps the threshold")
+check(MH.db.profile.arcaneBurnMode == "auto" and MH.db.profile.arcaneBurnMana == 35, "/ch burn auto keeps the threshold")
 COOLDOWNS[EVO] = 240
 
 newFight(); TARGETNAME, TARGET_HP = "Long boss", 100; state(30000, 3); upd(4)
@@ -774,14 +775,14 @@ check(shown("lb") and shown("fireball") and not shown("ab") and not shown("gem")
 AURAS.player = { { "Hot Streak", 0, nil, 48108 } }; upd()
 check(reco() == "pyro", "Fire rotation: Hot Streak -> Pyroblast"); AURAS.player = {}
 check(KR.info.__text:find("FB/min", 1, true), "Fire info line")
-Slash("rota arkan"); check(shown("ab") and not shown("lb"), "/mh rota arkan")
+Slash("rota arkan"); check(shown("ab") and not shown("lb"), "/ch rota arkan")
 Slash("rota auto"); check(shown("ab"), "auto with Arcane talents")
 PLAYER_TALENTS = { 0, 55, 16 }; FireEvent("ACTIVE_TALENT_GROUP_CHANGED"); check(shown("lb") and not shown("ab"), "spec switch to Fire")
 PLAYER_TALENTS = { 0, 17, 54 }; FireEvent("PLAYER_TALENT_UPDATE"); check(shown("fbolt") and not shown("lb") and not shown("ab"), "Frost talents: Frost")
 Slash("rota"); Slash("burn"); Slash("rota bogus")
 
 -- options
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 local a = o.args.arcane.args
 check(a.arcaneBurnMana.min == 10 and a.arcaneBurnMana.max == 90 and a.arcaneBurnMode.values.auto ~= nil, "Arcane options group")
 o.args.arcane.set({ "arcane", "arcaneBurnMana" }, 50); check(MH.db.profile.arcaneBurnMana == 50, "threshold via options")
@@ -797,14 +798,14 @@ OUT[#OUT + 1] = "ARCANE OK"
 # Spellsteal: worth list by ID, isStealable decides, range, focus hint, setting, cache, indicator,
 # Fire and Arcane, emergencies first, nothing protected changes in combat.
 SPELLSTEAL = r'''
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 local de = GetLocale() == "deDE"
 local function upd(n) for i = 1, (n or 2) do Tick(0.15) end end
-local function reco() return FRAMES.MageHelperOneButton.currentKey end
-local function st(k) return FRAMES["MageHelperButton_" .. k].state end
-local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
+local function reco() return FRAMES.ClassHelperOneButton.currentKey end
+local function st(k) return FRAMES["ClassHelperButton_" .. k].state end
+local function shown(k) return FRAMES["ClassHelperButton_" .. k].__shown end
 local function info() return KR.info.__text end
-local IND = FRAMES.MageHelperStealIndicator
+local IND = FRAMES.ClassHelperStealIndicator
 local STEAL = GetSpellInfo(30449)
 local NP = de and "Netherkraft" or "Nether Power"
 local VM = de and "Vampirmacht" or "Vampiric Might"
@@ -818,7 +819,7 @@ INCOMBAT, MOVING, NOTARGET, TARGETNAME, FOCUS, TARGET_HP = false, false, nil, "L
 AURAS.player, DEBUFFS.player, COOLDOWNS, ITEM_COOLDOWNS, BOSSES = {}, {}, {}, {}, {}
 check(MH.db.profile.spellsteal == true and MH.db.profile.spellstealAll == false, "Spellsteal defaults: on, worth list only")
 Slash("rota feuer"); upd()
-local m = FRAMES.MageHelperButton_steal.__attr.macrotext
+local m = FRAMES.ClassHelperButton_steal.__attr.macrotext
 check(m:find("/cast [mod:shift,@mouseover,harm,nodead][@target,harm,nodead] " .. STEAL, 1, true) and m:find("#showtooltip " .. STEAL, 1, true), "Spellsteal macro: target, Shift = mouseover: " .. m)
 check(not m:find("[@mouseover,harm,nodead][]", 1, true), "Spellsteal macro: no plain mouseover first")
 check(shown("steal") and shown("lb") and KR.__w == 8 + 10 * 53 + 95, "Fire set has the steal button, bar width " .. tostring(KR.__w))
@@ -861,9 +862,9 @@ check(reco() ~= "steal" and not IND.__shown and st("steal") == "normal", "listed
 setTarget({ aura(OTHER, 12345, true) }); upd()
 check(reco() ~= "steal" and IND.__shown and not IND.worth and IND.border.__vc[4] < 1, "unlisted stealable: indicator only")
 Slash("raub alle"); upd()
-check(MH.db.profile.spellstealAll and reco() == "steal" and st("steal") == "glow", "/mh raub alle: unlisted -> steal, not urgent (" .. tostring(st("steal")) .. ")")
+check(MH.db.profile.spellstealAll and reco() == "steal" and st("steal") == "glow", "/ch raub alle: unlisted -> steal, not urgent (" .. tostring(st("steal")) .. ")")
 Slash("steal worth"); upd()
-check(not MH.db.profile.spellstealAll and reco() ~= "steal", "/mh steal worth: unlisted ignored again")
+check(not MH.db.profile.spellstealAll and reco() ~= "steal", "/ch steal worth: unlisted ignored again")
 
 -- the cache: no scan per update, rescan on UNIT_AURA / target change only
 local calls = AURA_CALLS
@@ -908,10 +909,10 @@ check(not info():find(VM, 1, true), "focus cleared: hint gone")
 -- feature off: nothing at all
 Slash("raub aus")
 setTarget({ aura(NP, 66228, true) }); upd()
-check(not MH.db.profile.spellsteal and reco() ~= "steal" and not IND.__shown and st("steal") == "normal", "/mh raub aus: nothing")
+check(not MH.db.profile.spellsteal and reco() ~= "steal" and not IND.__shown and st("steal") == "normal", "/ch raub aus: nothing")
 RANGE.target = 0; upd(); check(st("steal") == "normal" and not info():find(NP, 1, true), "off: no out-of-range hint either"); RANGE.target = nil
 Slash("steal on"); upd()
-check(MH.db.profile.spellsteal and reco() == "steal", "/mh steal on: rescans at once")
+check(MH.db.profile.spellsteal and reco() == "steal", "/ch steal on: rescans at once")
 
 -- Arcane: same hook (switch out of combat), emergencies first
 INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")
@@ -929,7 +930,7 @@ RANGE.target = nil
 setTarget({}); upd(); check(reco() ~= "steal", "Arcane: buff gone")
 
 -- options
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 local g = o.args.spellsteal
 check(g and g.args.spellsteal and g.args.spellstealAll and g.args.help, "options group Spellsteal")
 g.set({ "spellsteal", "spellstealAll" }, true); check(MH.db.profile.spellstealAll == true, "spellstealAll via options")
@@ -948,13 +949,13 @@ OUT[#OUT + 1] = "SPELLSTEAL OK"
 # Mirror Image, trinkets, T10 order), gem/Evocation, Deep Freeze on Fingers of Frost or a frozen
 # target, Cold Snap, Brain Freeze, movement, switching modes in combat.
 FROST = r'''
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 local de = GetLocale() == "deDE"
 local function upd(n) for i = 1, (n or 3) do Tick(0.15) end end
-local function reco() return FRAMES.MageHelperOneButton.currentKey end
-local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
-local function macro(k) return FRAMES["MageHelperButton_" .. k].__attr.macrotext end
-local function btnState(k) return FRAMES["MageHelperButton_" .. k].state end
+local function reco() return FRAMES.ClassHelperOneButton.currentKey end
+local function shown(k) return FRAMES["ClassHelperButton_" .. k].__shown end
+local function macro(k) return FRAMES["ClassHelperButton_" .. k].__attr.macrotext end
+local function btnState(k) return FRAMES["ClassHelperButton_" .. k].state end
 local function info() return KR.info.__text end
 local function S(id) return (GetSpellInfo(id)) end
 local DF, SNAP, ELE, IV, MI, FBL = S(44572), S(11958), S(31687), S(12472), S(55342), S(42873)
@@ -999,7 +1000,7 @@ INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); NOTARGET = true; upd()
 check(reco() ~= "fcd", "in combat without a target: no cooldowns (" .. tostring(reco()) .. ")")
 NOTARGET = nil; upd(); check(reco() == "fcd", "in combat with a target: cooldown button")
 check(info():find(IV, 1, true), "Icy Veins named: " .. info())
-check(not pcall(FRAMES.MageHelperButton_fbolt.Hide, FRAMES.MageHelperButton_fbolt), "stub: secure button Hide() blocked in combat")
+check(not pcall(FRAMES.ClassHelperButton_fbolt.Hide, FRAMES.ClassHelperButton_fbolt), "stub: secure button Hide() blocked in combat")
 COOLDOWNS[IV] = 100; upd(); check(reco() == "fcd" and info():find(MI, 1, true), "Icy Veins on CD: Mirror Image via the button")
 COOLDOWNS[MI] = 1.2; upd()   -- only the GCD runs on Mirror Image
 check(reco() == "fcd" and btnState("fcd") == "prep", "GCD: stays recommended, not clickable yet (" .. tostring(btnState("fcd")) .. ")")
@@ -1109,10 +1110,10 @@ check(MH.db.profile.rotationMode == "fire" and shown("fbolt") and not shown("lb"
 INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
 check(shown("lb") and not shown("fbolt") and not shown("fcd"), "after combat: Fire buttons")
 AURAS.player = { { "Hot Streak", 0, nil, 48108 } }; upd(); check(reco() == "pyro", "Fire rotation: Hot Streak -> Pyroblast"); AURAS.player = {}
-Slash("rota frost"); check(MH.db.profile.rotationMode == "frost" and shown("fbolt") and not shown("lb"), "/mh rota frost")
-Slash("rota arkan"); upd(); check(shown("ab") and not shown("fbolt") and (reco() == "ab" or reco() == "am"), "/mh rota arkan")
+Slash("rota frost"); check(MH.db.profile.rotationMode == "frost" and shown("fbolt") and not shown("lb"), "/ch rota frost")
+Slash("rota arkan"); upd(); check(shown("ab") and not shown("fbolt") and (reco() == "ab" or reco() == "am"), "/ch rota arkan")
 Slash("rota auto"); check(shown("fbolt"), "auto with Frost talents")
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 check(o.args.rotation.args.rotationMode.values().frost ~= nil, "rotation mode value frost")
 o.args.rotation.args.rotationMode.set({ "rotation", "rotationMode" }, "fire"); check(shown("lb"), "options: Fire")
 o.args.rotation.args.rotationMode.set({ "rotation", "rotationMode" }, "frost"); check(shown("fbolt"), "options: Frost")
@@ -1135,11 +1136,11 @@ OUT[#OUT + 1] = "FROST OK"
 # Potion choice: auto by the active rotation, fixed potions and none; cooldown macros of all three
 # rotations, buff bar by buff ID, changes in combat only after combat.
 POTION = r'''
-local P = FRAMES.MageHelperBuff_potion
+local P = FRAMES.ClassHelperBuff_potion
 local C = MH.db.char
 local function upd(n) for i = 1, (n or 3) do Tick(0.15) end end
-local function macro(k) return FRAMES["MageHelperButton_" .. k].__attr.macrotext end
-local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
+local function macro(k) return FRAMES["ClassHelperButton_" .. k].__attr.macrotext end
+local function shown(k) return FRAMES["ClassHelperButton_" .. k].__shown end
 local function has(k, item) return macro(k):find("/use item:" .. item, 1, true) ~= nil end
 local function potionLines(k) local n = 0; for _ in macro(k):gmatch("/use item:4021[12]") do n = n + 1 end
   for _ in macro(k):gmatch("/use item:33448") do n = n + 1 end; for _ in macro(k):gmatch("/use item:40093") do n = n + 1 end; return n end
@@ -1192,7 +1193,7 @@ check(has("cd", 40093) and not has("cd", 40212), "after combat the cd macro uses
 check(tostring(P.icon.__tex):find("item40093", 1, true), "after combat the buff bar follows")
 P.__scripts.OnEnter(P)
 -- options
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 local v = o.args.general.args.potion.values()
 check(v.auto and v.none and v.speed and v.wildmagic and v.runicmana and v.indestructible, "options list the potions")
 OUT[#OUT + 1] = "POTION AUTO " .. v.auto .. " / " .. v.none
@@ -1211,11 +1212,11 @@ OUT[#OUT + 1] = "POTION OK"
 # -> Ice Block or stop casting, ends on 71615 removed / 71620 / timeout / combat end; cast start is a
 # late fallback (combat log in the 3.3.5 layout or UnitCastingInfo); heroic and other casters ignored.
 TEARGAS = r"""
-local KR = MageHelperFrame
+local KR = ClassHelperFrame
 local de = GetLocale() == "deDE"
 local function upd(n) for i = 1, (n or 2) do Tick(0.15) end end
-local function reco() return FRAMES.MageHelperOneButton.currentKey end
-local function st(k) return FRAMES["MageHelperButton_" .. k].state end
+local function reco() return FRAMES.ClassHelperOneButton.currentKey end
+local function st(k) return FRAMES["ClassHelperButton_" .. k].state end
 local function info() return KR.info.__text end
 local function S(id) return (GetSpellInfo(id)) end
 local function has(s, ger, eng) return s:find(de and ger or eng, 1, true) ~= nil end
@@ -1259,7 +1260,7 @@ gasCast(); upd()
 check(reco() == nil, "cast started, still invisible: keep waiting")
 upd(16) -- 2.4 s later the gas has landed
 check(reco() == "invis" and st("invis") == "urgent" and has(info(), "greift in ~", "re-engages in ~"), "gas landed, invisible: cancel Invisibility (" .. tostring(reco()) .. ") " .. info())
-check(FRAMES.MageHelperButton_invis.__attr.macrotext:find("/cancelaura " .. INVIS, 1, true), "invis macro cancels the aura first")
+check(FRAMES.ClassHelperButton_invis.__attr.macrotext:find("/cancelaura " .. INVIS, 1, true), "invis macro cancels the aura first")
 show("CANCEL")
 invisible(false); CL("SPELL_AURA_APPLIED", PG, PN, 0xa48, RAIDG, "Anya", 0x514, 71615, GAS, 8, "DEBUFF"); upd()
 check(reco() ~= "invis" and reco() ~= nil and has(info(), "Vorsicht Bedrohung", "watch your threat"), "cancelled: rotation + threat hint (" .. tostring(reco()) .. ") " .. info())
@@ -1300,11 +1301,11 @@ check(not has(info(), "Seuchenmord", "Putricide"), "71615 removed: done after th
 fight(); COOLDOWNS = {}
 local before = #OUT
 Slash(de and "tr\195\164nengas 3" or "teargas 3")
-check(MH.db.profile.putricideInvisLead == 3 and OUT[before + 1]:find("3.0", 1, true), "/mh tränengas 3 sets the lead: " .. tostring(OUT[before + 1]))
+check(MH.db.profile.putricideInvisLead == 3 and OUT[before + 1]:find("3.0", 1, true), "/ch tränengas 3 sets the lead: " .. tostring(OUT[before + 1]))
 hp(83.2); check(reco() ~= "invis" and st("invis") == "prep", "lead 3: 83.2% only pre-warning")
 hp(82.9); check(reco() == "invis", "lead 3: 82.9% urgent")
 Slash("traenengas 9"); check(MH.db.profile.putricideInvisLead == 5, "lead clamped to 5")
-local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0")
 local b = o.args.bosses.args
 check(b.putricideInvisLead.min == 0.5 and b.putricideInvisLead.max == 5, "options: lead slider 0.5-5")
 o.args.bosses.set({ "bosses", "putricideInvisLead" }, 0.5); fight()
@@ -1313,8 +1314,8 @@ hp(80.6); check(reco() ~= "invis", "lead 0.5: 80.6% not yet")
 hp(80.4); check(reco() == "invis", "lead 0.5: 80.4% urgent")
 b.putricideInvis.set({ "bosses", "putricideInvis" }, false); upd()
 check(MH.db.profile.putricideInvis == false and reco() ~= "invis" and st("invis") == "normal", "options: off -> nothing")
-Slash("teargas on"); Slash("teargas 1"); upd(); check(reco() == "invis", "/mh teargas on")
-Slash("teargas off"); upd(); check(reco() ~= "invis", "/mh teargas off -> nothing")
+Slash("teargas on"); Slash("teargas 1"); upd(); check(reco() == "invis", "/ch teargas on")
+Slash("teargas off"); upd(); check(reco() ~= "invis", "/ch teargas off -> nothing")
 gasCast(); upd(); check(reco() ~= "invis", "off: cast start ignored")
 Slash("teargas on"); fight()
 
@@ -1381,14 +1382,14 @@ DEBUFFS.player = {}; THREAT.boss1 = nil
 -- invisible before the gas, outside the lead window: wait, and the analyzer does not ask to cancel
 fight(); COOLDOWNS = {}; hp(81.8); invisible(true); COOLDOWNS[INVIS] = 180; upd()
 check(reco() == nil and has(info(), "Unsichtbar: warten auf Tränengas", "Invisible: wait for Tear Gas"), "invisible at 81.8% (above the 1% lead): wait: " .. info())
-check(MageHelperAnalyzer_GetPriorityOverride() == nil, "analyzer override quiet at 81.8% before the gas")
+check(ClassHelperAnalyzer_GetPriorityOverride() == nil, "analyzer override quiet at 81.8% before the gas")
 hp(79.6)
 check(reco() == nil and has(info(), "Unsichtbar: warten auf Tränengas", "Invisible: wait for Tear Gas"), "invisible at 79.6% before the cast: wait: " .. info())
-check(MageHelperAnalyzer_GetPriorityOverride() == nil, "analyzer override quiet at 79.6% before the gas")
+check(ClassHelperAnalyzer_GetPriorityOverride() == nil, "analyzer override quiet at 79.6% before the gas")
 gasCast(); upd(18)
-check(reco() == "invis" and MageHelperAnalyzer_GetPriorityOverride() ~= nil, "gas landed: cancel Invisibility (helper and analyzer)")
+check(reco() == "invis" and ClassHelperAnalyzer_GetPriorityOverride() ~= nil, "gas landed: cancel Invisibility (helper and analyzer)")
 fight(); hp(70); upd()
-check(reco() == "invis" and MageHelperAnalyzer_GetPriorityOverride() ~= nil, "invisible at 70% (no gas coming): analyzer cancel hint as before")
+check(reco() == "invis" and ClassHelperAnalyzer_GetPriorityOverride() ~= nil, "invisible at 70% (no gas coming): analyzer cancel hint as before")
 invisible(false); COOLDOWNS = {}
 
 -- trigger from the measured health loss: fast -> earlier than the % lead, slow -> the % lead
@@ -1413,7 +1414,7 @@ upd(7)
 check(reco() == "ice" and has(info(), "EISBLOCK ABBRECHEN", "CANCEL ICE BLOCK"), "1.2 s later the generic cancel hint is back: " .. info())
 iceBlock(false); COOLDOWNS = {}
 FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", INVIS, "", ""); AURAS.player = { { INVIS, 0, GetTime() + 3, 66 } }; COOLDOWNS[INVIS] = 180; upd()
-check(reco() ~= "invis" and MageHelperAnalyzer_GetPriorityOverride() == nil, "Invisibility just cast (fading): no 'cancel Invisibility' (" .. tostring(reco()) .. ")")
+check(reco() ~= "invis" and ClassHelperAnalyzer_GetPriorityOverride() == nil, "Invisibility just cast (fading): no 'cancel Invisibility' (" .. tostring(reco()) .. ")")
 upd(7); check(reco() == "invis", "away from the gas the analyzer's cancel hint comes back after 1.2 s")
 invisible(false); COOLDOWNS = {}
 fight(); hp(80.9); check(reco() == "invis", "Tear Gas trigger")
@@ -1465,11 +1466,11 @@ for loc in ("deDE", "enUS"):
     lua.execute(STUB)
     # SavedVariables as the client provides them before ADDON_LOADED
     legacy = lua.execute(LEGACY)
-    if loc == "deDE": g.MageHelperLegacyDB = legacy
-    else: g.MageHelperDB = legacy  # variant: per-character file was not renamed
+    if loc == "deDE": g.ClassHelperLegacyDB = legacy
+    else: g.ClassHelperDB = legacy  # variant: per-character file was not renamed
     for f in files:
-        g.LoadAddonFile(open(f, encoding="utf-8-sig").read(), os.path.relpath(f, ROOT), "MageHelper")
-    g.FireEvent("ADDON_LOADED", "MageHelper")
+        g.LoadAddonFile(open(f, encoding="utf-8-sig").read(), os.path.relpath(f, ROOT), "ClassHelper")
+    g.FireEvent("ADDON_LOADED", "ClassHelper")
     g.LOGGEDIN = True
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
@@ -1481,7 +1482,7 @@ for loc in ("deDE", "enUS"):
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS", "|cffff7d0aClassHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)

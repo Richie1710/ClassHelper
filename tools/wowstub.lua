@@ -1,4 +1,4 @@
--- Minimal WoW 3.3.5 API stub for smoke-testing MageHelper (incl. its embedded Ace3) outside the game.
+-- Minimal WoW 3.3.5 API stub for smoke-testing ClassHelper (incl. its embedded Ace3) outside the game.
 -- Globals provided by the Python driver: LOCALE ("deDE"/"enUS"), ADDON_VERSION; it then calls
 -- LoadAddonFile() for every file in TOC order and FireEvent("ADDON_LOADED"/"PLAYER_LOGIN").
 OUT = {}
@@ -298,7 +298,7 @@ local function newObj(kind, name)
   end })
 end
 -- Like the client: protected frames (SecureActionButtonTemplate and every frame that holds one,
--- e.g. the main bar MageHelperFrame) can't be shown, hidden, moved, resized, scaled, reparented or
+-- e.g. the main bar ClassHelperFrame) can't be shown, hidden, moved, resized, scaled, reparented or
 -- get attributes in combat.
 local function guard(self, what)
   if self.__protected and INCOMBAT then
@@ -409,7 +409,7 @@ function GameTooltip.SetText(self, t) OUT[#OUT+1] = "TIP " .. tostring(t) end
 
 -- Unknown globals: record and return nil (catches typos / APIs the stub lacks)
 setmetatable(_G, { __index = function(t, k)
-  if type(k) == "string" and not k:match("^MageHelper") and not k:match("^SLASH_") and not k:match("^FRAME_") then
+  if type(k) == "string" and not k:match("^ClassHelper") and not k:match("^SLASH_") and not k:match("^FRAME_") then
     MISSING[k] = true
   end
   return nil
