@@ -162,6 +162,7 @@ PET = false
 function UnitExists(u) return (u == "target" and not NOTARGET) or (u == "focus" and FOCUS ~= nil) or (u == "pet" and PET == true) or raidEntry(u) ~= nil or BOSSES[u] ~= nil end
 function UnitIsDead(u)
   if u == "focus" then return FOCUS ~= nil and FOCUS.dead or false end
+  if u == "target" then return TARGET_DEAD == true end
   return BOSSES[u] ~= nil and BOSSES[u].dead or false
 end
 function UnitIsDeadOrGhost(u) local e = raidEntry(u); return e and e.dead or false end

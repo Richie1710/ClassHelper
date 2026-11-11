@@ -819,7 +819,8 @@ AURAS.player, DEBUFFS.player, COOLDOWNS, ITEM_COOLDOWNS, BOSSES = {}, {}, {}, {}
 check(MH.db.profile.spellsteal == true and MH.db.profile.spellstealAll == false, "Spellsteal defaults: on, worth list only")
 Slash("rota feuer"); upd()
 local m = FRAMES.MageHelperButton_steal.__attr.macrotext
-check(m:find("/cast [@mouseover,harm,nodead][] " .. STEAL, 1, true) and m:find("#showtooltip " .. STEAL, 1, true), "Spellsteal macro: " .. m)
+check(m:find("/cast [mod:shift,@mouseover,harm,nodead][@target,harm,nodead] " .. STEAL, 1, true) and m:find("#showtooltip " .. STEAL, 1, true), "Spellsteal macro: target, Shift = mouseover: " .. m)
+check(not m:find("[@mouseover,harm,nodead][]", 1, true), "Spellsteal macro: no plain mouseover first")
 check(shown("steal") and shown("lb") and KR.__w == 8 + 10 * 53 + 95, "Fire set has the steal button, bar width " .. tostring(KR.__w))
 check(not IND.__shown, "indicator hidden without stealable buffs")
 
@@ -877,6 +878,13 @@ AURAS.target = {}; TARGETNAME = "Add"; FireEvent("PLAYER_TARGET_CHANGED"); upd()
 check(reco() ~= "steal" and not IND.__shown, "target change rescans (buff gone, indicator hidden)")
 TARGET_FRIENDLY = true; AURAS.target = { aura(NP, 66228, true) }; FireEvent("PLAYER_TARGET_CHANGED"); upd()
 check(reco() ~= "steal" and not IND.__shown, "friendly target is not scanned")
+TARGET_FRIENDLY = nil; FireEvent("PLAYER_TARGET_CHANGED"); upd()
+check(reco() == "steal", "hostile again: steal")
+TARGET_DEAD = true; upd()   -- died without UNIT_AURA: the cache still has the buff
+check(reco() ~= "steal" and st("steal") ~= "prep", "dead target (stale cache): no steal (" .. tostring(reco()) .. ")")
+TARGET_DEAD = nil; upd(); check(reco() == "steal", "alive again: steal")
+TARGET_FRIENDLY = true; upd()   -- turned friendly (mind control ended etc.) without an event
+check(reco() ~= "steal", "friendly target (stale cache): no steal (" .. tostring(reco()) .. ")")
 TARGET_FRIENDLY = nil; AURAS.target = {}; FireEvent("PLAYER_TARGET_CHANGED")
 -- expired buff in the cache is ignored
 AURAS.target = { { NP, 0, GetTime() + 1, 66228, nil, 1 } }; FireEvent("UNIT_AURA", "target"); upd(10)
@@ -886,6 +894,7 @@ AURAS.target = {}; FireEvent("UNIT_AURA", "target")
 -- focus only: hint in the info line, no recommendation
 FOCUS = { name = "Cult Fanatic" }; AURAS.focus = { aura(VM, 70674, true) }; FireEvent("PLAYER_FOCUS_CHANGED"); upd()
 check(reco() ~= "steal" and info():find(VM, 1, true) and info():find(de and "Fokus" or "Focus", 1, true), "focus only: hint (" .. info() .. ")")
+check(info():find("Shift", 1, true), "focus hint names Shift + mouseover: " .. info())
 OUT[#OUT + 1] = "STEAL FOCUS " .. info()
 mark = #OUT; IND.__scripts.OnEnter(IND)
 check(table.concat(OUT, "\n", mark + 1):find(VM, 1, true), "tooltip lists the focus buff")
@@ -965,11 +974,22 @@ check(MH.db.profile.rotationMode == "auto", "auto mode")
 for _, k in ipairs({ "fbolt", "ilance", "dfreeze", "ffb", "fcd", "csnap", "elem", "gem", "evo", "fb_move", "ice", "invis", "stop" }) do check(shown(k), "Frost button shown: " .. k) end
 for _, k in ipairs({ "lb", "pyro", "fireball", "comb", "cd", "ab", "am", "abarr", "ap", "pom", "mirror" }) do check(not shown(k), "Fire/Arcane button hidden: " .. k) end
 local m = macro("fcd")
-check(m:find("#showtooltip " .. IV, 1, true) and m:find("/use 13", 1, true) and m:find("/use 14", 1, true), "cooldown button macro: " .. m)
+check(m:find("#showtooltip " .. IV, 1, true) and not m:find("/use 13", 1, true) and not m:find("/use 14", 1, true), "cooldown button macro without trinkets: no /use 13/14: " .. m)
+EQUIPPED = { [13] = "|Hitem:50353|h[x]|h", [14] = "|Hitem:50365|h[x]|h" }; ITEM_USE[50365] = "Use"
+FireEvent("UNIT_INVENTORY_CHANGED", "player"); m = macro("fcd")
+check(not m:find("/use 13", 1, true) and m:find("/use 14", 1, true), "passive trinket 13: no /use 13, on-use 14: /use 14: " .. m)
+check(m:find("/use 14", 1, true) < m:find("/cast " .. MI, 1, true), "trinket before Mirror Image")
+EQUIPPED, ITEM_USE = {}, {}; FireEvent("UNIT_INVENTORY_CHANGED", "player"); m = macro("fcd")
+check(not m:find("/use 1[34]"), "trinkets gone: no /use 13/14 again: " .. m)
+check(not m:find("/use 10", 1, true) == not MH.db.profile.useGloves, "gloves line follows the gloves option: " .. m)
 check(m:find("/cast " .. IV, 1, true) < m:find("/cast " .. MI, 1, true), "without T10: Icy Veins before Mirror Image")
 
 -- Water Elemental whenever no pet is out (also out of combat); out of combat no cooldowns, gem or Evocation
-upd(); check(reco() == "elem", "no pet: Water Elemental (" .. tostring(reco()) .. ")")
+upd(); check(reco() == "elem" and btnState("elem") == "glow", "no pet, out of combat with a target: Water Elemental, not urgent (" .. tostring(reco()) .. ", " .. tostring(btnState("elem")) .. ")")
+check(info():find(de and "Vor dem Pull" or "Pre-pull", 1, true), "pre-pull note: " .. info())
+NOTARGET = true; upd(); check(reco() ~= "elem" and btnState("elem") == "normal", "no pet, out of combat, no target: no Water Elemental (" .. tostring(reco()) .. ")")
+TARGET_FRIENDLY = true; NOTARGET = nil; upd(); check(reco() ~= "elem", "friendly target out of combat: no Water Elemental")
+TARGET_FRIENDLY = nil
 PET = true; upd(); check(reco() == "fbolt", "pet out, out of combat: Frostbolt (" .. tostring(reco()) .. ")")
 PLAYER_MANA = 3000; upd(); check(reco() == "fbolt", "out of combat: no Mana Gem or Evocation (" .. tostring(reco()) .. ")")
 PLAYER_MANA = 30000
@@ -1004,13 +1024,16 @@ EQUIPPED = {}; FireEvent("UNIT_INVENTORY_CHANGED", "player")
 COOLDOWNS[IV], COOLDOWNS[MI] = 100, 100
 
 -- the pet dies in combat: summon again (unless on cooldown)
-PET = false; upd(); check(reco() == "elem", "pet died: Water Elemental")
+PET = false; upd(); check(reco() == "elem" and btnState("elem") == "urgent", "pet died in combat: Water Elemental, urgent (" .. tostring(btnState("elem")) .. ")")
+NOTARGET = true; upd(); check(reco() == "elem" and btnState("elem") == "urgent", "in combat without a target: Water Elemental still urgent"); NOTARGET = nil
 COOLDOWNS[ELE] = 150; upd(); check(reco() == "fbolt", "Water Elemental on CD: Frostbolt")
 PET, COOLDOWNS[ELE] = true, nil
 
 -- Mana Gem when the missing mana >= its yield
 PLAYER_MANA = 27000; upd(); check(reco() == "fbolt", "3000 missing: no gem yet")
 PLAYER_MANA = 26000; upd(); check(reco() == "gem", "4000 missing: Mana Gem")
+ITEM_CHARGES[33312] = 0; upd(); check(reco() ~= "gem", "Frost: gem with 0 charges left: not recommended (" .. tostring(reco()) .. ")")
+ITEM_CHARGES[33312] = nil
 ITEM_COOLDOWNS[33312] = 60; PLAYER_MANA = 30000
 
 -- Deep Freeze on Fingers of Frost (both aura IDs) or a frozen target
@@ -1023,11 +1046,23 @@ AURAS.player = { { S(44544), 0, nil, 44544 } }; upd(); check(reco() == "dfreeze"
 AURAS.player = {}; DEBUFFS.target = FROZEN; upd(); check(reco() == "dfreeze", "frozen target: Deep Freeze")
 DEBUFFS.target = {}; upd(); check(reco() == "fbolt", "nothing up: Frostbolt")
 
--- Cold Snap when Deep Freeze has more than 15 s left (only if known)
-AURAS.player = { FOF }; COOLDOWNS[DF] = 28; upd()
-check(reco() == "csnap", "Deep Freeze 28 s CD: Cold Snap (" .. tostring(reco()) .. ")")
+-- SimC 3.3 order: Deep Freeze > Frostbolt with FoF/frozen (not moving) > Cold Snap > Frostfire Bolt
+local BF = { S(57761), 0, nil, 57761 }
+AURAS.player = { FOF, BF }; COOLDOWNS[DF] = 28; upd()
+check(reco() == "fbolt" and info():find(S(74396), 1, true), "FoF + Brain Freeze, Deep Freeze on CD: Frostbolt first (" .. tostring(reco()) .. ", " .. info() .. ")")
+AURAS.player = { BF }; DEBUFFS.target = FROZEN; upd(); check(reco() == "fbolt", "frozen + Brain Freeze: Frostbolt first (" .. tostring(reco()) .. ")")
+DEBUFFS.target = {}
+-- Cold Snap when Deep Freeze has more than 15 s left and Icy Veins is on cooldown, not active
+AURAS.player = {}; upd()
+check(reco() == "csnap", "Deep Freeze 28 s, Icy Veins on CD: Cold Snap (" .. tostring(reco()) .. ")")
 check(info():find("DF 28", 1, true), "info line: Deep Freeze cooldown: " .. info())
-KNOWN[11958] = false; upd(); check(reco() == "fbolt", "Cold Snap not talented: Frostbolt (also with FoF)")
+AURAS.player = { BF }; upd(); check(reco() == "csnap", "Cold Snap above Brain Freeze")
+AURAS.player = { { IV, 0, nil, 12472 } }; upd(); check(reco() ~= "csnap", "Icy Veins active: no Cold Snap (" .. tostring(reco()) .. ")")
+AURAS.player = {}; COOLDOWNS[IV] = nil; COOLDOWNS[MI] = 100; upd()
+check(reco() == "fcd", "Icy Veins ready: cooldown button, not Cold Snap (" .. tostring(reco()) .. ")")
+KNOWN[12472] = false; upd(); check(reco() ~= "csnap", "Icy Veins not known: no Cold Snap (" .. tostring(reco()) .. ")")
+KNOWN[12472] = nil; COOLDOWNS[IV] = 100; upd(); check(reco() == "csnap", "Icy Veins on CD again: Cold Snap")
+KNOWN[11958] = false; upd(); check(reco() == "fbolt", "Cold Snap not talented: Frostbolt")
 KNOWN[11958] = nil
 COOLDOWNS[DF] = 12; upd(); check(reco() == "fbolt", "Deep Freeze 12 s CD: no Cold Snap")
 COOLDOWNS[SNAP], COOLDOWNS[DF] = 400, 28; upd(); check(reco() == "fbolt", "Cold Snap on CD: Frostbolt")
@@ -1036,6 +1071,15 @@ AURAS.player = {}
 -- Brain Freeze: Frostfire Bolt
 AURAS.player = { { S(57761), 0, nil, 57761 } }; upd()
 check(reco() == "ffb" and info():find("BF!", 1, true), "Brain Freeze: Frostfire Bolt (" .. tostring(reco()) .. ")")
+check(macro("ffb"):find("/cast " .. S(47610), 1, true), "Brain Freeze button casts Frostfire Bolt: " .. macro("ffb"))
+local FBALL = S(42833)
+KNOWN[47610] = false; upd()
+check(reco() == "ffb" and info():find(FBALL, 1, true), "no Frostfire Bolt: Fireball on Brain Freeze (" .. info() .. ")")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(macro("ffb"):find("/cast " .. FBALL, 1, true) and not macro("ffb"):find(S(47610), 1, true), "button falls back to Fireball: " .. macro("ffb"))
+KNOWN[47610] = nil; FireEvent("PLAYER_TALENT_UPDATE")
+check(macro("ffb"):find("/cast " .. S(47610), 1, true), "Frostfire Bolt known again: button casts it: " .. macro("ffb"))
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd()
 MOVING = true; upd(); check(reco() == "ffb", "Brain Freeze while moving: Frostfire Bolt (instant)")
 
 -- moving: Ice Lance with FoF or frozen, else Fire Blast, else Ice Lance

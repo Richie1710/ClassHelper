@@ -361,14 +361,14 @@ local L_EN = {
     ["ZAUBERRAUB: %s"] = "SPELLSTEAL: %s",
     ["Stehlbar: %s"] = "Stealable: %s",
     ["%s: %s - außer Reichweite (30 m)"] = "%s: %s - out of range (30 yd)",
-    ["Fokus: %s stehlen (Mouseover oder Ziel)"] = "Focus: steal %s (mouseover or target)",
+    ["Fokus: %s stehlen (anvisieren oder Shift + Mouseover)"] = "Focus: steal %s (target it or Shift + mouseover)",
     ["Stehlbare Buffs"] = "Stealable buffs",
     ["Fokus"] = "Focus",
     ["Orange = lohnend (Liste), grau = stehlbar"] = "Orange = worth stealing (list), grey = stealable",
     ["Zauberraub"] = "Spellsteal",
     ["Zauberraub empfehlen"] = "Recommend Spellsteal",
     ["Auch nicht gelistete stehlbare Buffs empfehlen (nicht dringend)"] = "Also recommend unlisted stealable buffs (not urgent)",
-    ["Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt auf Mouseover, sonst aufs Ziel. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels."] = "When your target has a stealable buff from the list of buffs worth stealing (e.g. Lord Jaraxxus, Lady Deathwhisper, the Faction Champions, the Argent Confessor and Sjonnir), the Steal button glows red, after the emergencies (Ice Block, Counterspell) and before damage. Spellsteal has a 30 yd range and costs a global cooldown; out of range the button turns blue. When only your focus has such a buff, the info line shows a hint; the button casts on your mouseover, otherwise on your target. The icon above the bar shows the target's first stealable buff.",
+    ["Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt aufs Ziel, mit Shift auf Mouseover. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels."] = "When your target has a stealable buff from the list of buffs worth stealing (e.g. Lord Jaraxxus, Lady Deathwhisper, the Faction Champions, the Argent Confessor and Sjonnir), the Steal button glows red, after the emergencies (Ice Block, Counterspell) and before damage. Spellsteal has a 30 yd range and costs a global cooldown; out of range the button turns blue. When only your focus has such a buff, the info line shows a hint; the button casts on your target, with Shift on your mouseover. The icon above the bar shows the target's first stealable buff.",
     ["MageHelper: Zauberraub AUS"] = "MageHelper: Spellsteal OFF",
     ["MageHelper: Zauberraub AN (nur lohnende Buffs)"] = "MageHelper: Spellsteal ON (only buffs worth stealing)",
     ["MageHelper: Zauberraub AN (alle stehlbaren Buffs)"] = "MageHelper: Spellsteal ON (all stealable buffs)",
@@ -376,6 +376,9 @@ local L_EN = {
     -- Frost rotation
     ["Frost"] = "Frost",
     ["Kein Begleiter: %s"] = "No pet: %s",
+    ["Vor dem Pull: %s"] = "Pre-pull: %s",
+    ["Eisige Finger"] = "Fingers of Frost",
+    ["Hirnfrost"] = "Brain Freeze",
     ["Schmuckstück bereit"] = "Trinket ready",
     ["Ziel eingefroren: %s"] = "Target frozen: %s",
     ["%s: %s-Abklingzeit %.0fs"] = "%s: %s cooldown %.0fs",
@@ -2102,6 +2105,8 @@ local function CreateUI()
     }) do
         CreateSpellButton(KR, data[1], data[2], data[3], data[4])
     end
+    buttons.ffb.macroBuilder = M.FfbMacro -- Fireball while Frostfire Bolt is not known
+    SetMacro(buttons.ffb, M.FfbMacro())
     buttons.fcd.macroBuilder = M.FrostCdMacro -- Icy Veins + Mirror Image + on-use trinkets in one click
     buttons.fcd.cooldownRemaining = M.FrostCdRemaining -- usable when any of them is
     SetMacro(buttons.fcd, M.FrostCdMacro())
@@ -2109,9 +2114,10 @@ local function CreateUI()
         "#showtooltip " .. ItemName(M.MANA_GEM_ITEM) .. "\n/use " .. ItemName(M.MANA_GEM_ITEM))
     gem.spellName, gem.itemId = nil, M.MANA_GEM_ITEM
     gem.icon:SetTexture((GetItemIcon and GetItemIcon(M.MANA_GEM_ITEM)) or "Interface\\Icons\\INV_Misc_Gem_Stone_01")
-    -- Spellsteal, in every rotation's set: on a hostile mouseover, otherwise on the target.
+    -- Spellsteal, in every rotation's set: on the target (the unit M.SpellstealReco checks); with
+    -- Shift on a hostile mouseover (e.g. the focus mob).
     CreateSpellButton(KR, "steal", L("Raub"), spells.steal,
-        "#showtooltip " .. spells.steal .. "\n/cast [@mouseover,harm,nodead][] " .. spells.steal)
+        "#showtooltip " .. spells.steal .. "\n/cast [mod:shift,@mouseover,harm,nodead][@target,harm,nodead] " .. spells.steal)
     M.LayoutRota(M.DesiredRota())
     M.CreateStealIndicator()
 
@@ -2797,7 +2803,8 @@ end
 function M.SpellstealReco()
     if not cfg.spellsteal or not buttons.steal or not M.KnowsSpell(M.STEAL_ID) then return nil end
     local now = GetTime()
-    local a = M.StealFirst("target", now)
+    -- the cache can be stale (target died or turned friendly without UNIT_AURA): check the unit now
+    local a = UnitCanAttack("player", "target") and not UnitIsDead("target") and M.StealFirst("target", now) or nil
     if a and (a.worth or cfg.spellstealAll) then
         if IsSpellInRange(spells.steal, "target") == 0 then
             M.stealPrep = true
@@ -2810,7 +2817,7 @@ function M.SpellstealReco()
     end
     if not UnitIsUnit("focus", "target") then
         local f = M.StealFirst("focus", now)
-        if f and f.worth then M.stealHint = string.format(L("Fokus: %s stehlen (Mouseover oder Ziel)"), f.name) end
+        if f and f.worth then M.stealHint = string.format(L("Fokus: %s stehlen (anvisieren oder Shift + Mouseover)"), f.name) end
     end
     return nil
 end
@@ -3474,6 +3481,22 @@ M.COLD_SNAP_DF = 15           -- Cold Snap when Deep Freeze has more than this l
 M.TRINKET_SLOTS = { 13, 14 }
 M.frost = {}
 
+-- Brain Freeze spell: Frostfire Bolt, or Fireball while Frostfire Bolt is not known (below 75).
+function M.BrainFreezeSpell() return M.KnowsSpell(M.SPELL_ID.ffb) and spells.ffb or spells.fireball end
+
+-- Proc name for the info line: the aura's name, else the localized spell name, else L(fallback).
+function M.ProcName(name, id, fallback) return name or GetSpellInfo(id) or L(fallback) end
+
+-- Brain Freeze button (key "ffb"): casts M.BrainFreezeSpell(); icon and cooldown follow it.
+function M.FfbMacro()
+    local spell, btn = M.BrainFreezeSpell(), buttons.ffb
+    if btn then
+        btn.spellName = spell
+        btn.icon:SetTexture(select(3, GetSpellInfo(spell)) or "Interface\\Icons\\INV_Misc_QuestionMark")
+    end
+    return MakeMacro(spell)
+end
+
 -- Fingers of Frost: up, charges (the highest count of the two auras, at least 1 while up), name.
 function M.FingersOfFrost()
     local up, best, name = false, 0, nil
@@ -3498,12 +3521,17 @@ function M.TargetFrozen()
     return false
 end
 
--- On-use trinkets (GetItemSpell knows a use effect): ready, shortest remaining cooldown.
+-- Trinket in this slot has a use effect (GetItemSpell knows one); passive trinkets don't.
+function M.OnUseTrinket(slot)
+    local id = ItemIdFromLink(GetInventoryItemLink("player", slot))
+    return id and GetItemSpell and GetItemSpell(id) and true or false
+end
+
+-- On-use trinkets: ready, shortest remaining cooldown.
 function M.TrinketCooldown()
     local ready, best = false, 999
     for _, slot in ipairs(M.TRINKET_SLOTS) do
-        local id = ItemIdFromLink(GetInventoryItemLink("player", slot))
-        if id and GetItemSpell and GetItemSpell(id) then
+        if M.OnUseTrinket(slot) then
             local r, remain = ItemSlotReady(slot)
             ready = ready or r
             best = math.min(best, r and 0 or remain)
@@ -3514,6 +3542,7 @@ end
 
 -- Frost cooldown button: Icy Veins (if known) and the trinkets are off the GCD, so one click casts
 -- them all together with Mirror Image. With the T10 4-piece Mirror Image goes first (+18% damage).
+-- Only on-use trinkets get a /use line; UNIT_INVENTORY_CHANGED rebuilds the macro (out of combat).
 function M.FrostCdMacro()
     local iv = M.KnowsSpell(M.SPELL_ID.iv)
     local t10 = M.T10Count() >= 4
@@ -3521,8 +3550,9 @@ function M.FrostCdMacro()
     if cfg.useGloves then t[#t + 1] = "/use 10" end
     if t10 then t[#t + 1] = "/cast " .. spells.mirror end
     if iv then t[#t + 1] = "/cast " .. spells.iv end
-    t[#t + 1] = "/use 13"
-    t[#t + 1] = "/use 14"
+    for _, slot in ipairs(M.TRINKET_SLOTS) do
+        if M.OnUseTrinket(slot) then t[#t + 1] = "/use " .. slot end
+    end
     if not t10 then t[#t + 1] = "/cast " .. spells.mirror end
     return table.concat(t, "\n")
 end
@@ -3551,11 +3581,11 @@ function M.FrostState(now, targetOK)
     F.dfReady, F.dfCD = M.KnownReady("dfreeze")
     F.csReady, F.csCD = M.KnownReady("csnap")
     F.ivReady, F.ivCD = M.KnownReady("iv")
+    F.ivUp = HasBuff("player", M.IV_NAMES, M.IV_IDS)
     F.mirrorReady, F.mirrorCD = M.KnownReady("mirror")
     F.trinketReady = M.TrinketCooldown()
     F.evoReady, F.evoCD = M.KnownReady("evo")
-    F.gemReady = GetItemCount(M.MANA_GEM_ITEM) > 0 and M.ItemCooldownRemaining(M.MANA_GEM_ITEM) <= 0
-    F.ffbKnown = M.KnowsSpell(M.SPELL_ID.ffb)
+    F.gemReady = M.GemCharges() > 0 and M.ItemCooldownRemaining(M.MANA_GEM_ITEM) <= 0
     F.ilanceKnown = M.KnowsSpell(M.SPELL_ID.ilance)
     F.fireblastUsable = targetOK and SpellUsableNow(spells.fireblast)
     F.targetOK = targetOK
@@ -3566,22 +3596,28 @@ end
 
 -- Frost priority model (after the shared emergencies in M.EmergencyReco and the Spellsteal hook;
 -- research: SimulationCraft 3.3.3 frost list):
--- 1) Summon Water Elemental when no pet is out (also in combat; instant, 3 min cooldown).
+-- 1) Summon Water Elemental when no pet is out: in combat urgent; out of combat only with an
+--    attackable target (pre-pull) and not urgent (instant, 3 min cooldown).
 -- 2) Cooldowns as soon as ready (in combat, with a target; no waiting for procs): one button for
 --    Icy Veins + Mirror Image + on-use trinkets (T10 4-piece: Mirror Image first).
 --    A cooldown that only shows the GCD counts as ready (M.KnownReady), so nothing flickers.
 -- 3) Mana Gem (in combat) when the missing mana >= the gem's yield.
 -- 4) Deep Freeze when Fingers of Frost is up or the target is frozen (on bosses FoF is the only
 --    "frozen" source).
--- 5) Cold Snap (known, in combat with a target) when Deep Freeze has more than 15 s left.
--- 6) Frostfire Bolt while Brain Freeze ("Fireball!") is up: instant and free, also while moving.
--- 7) Moving: Ice Lance with Fingers of Frost or a frozen target, else Fire Blast, else Ice Lance.
--- 8) Evocation (in combat) below 30% mana (rare for Frost; placed above the filler so it shows).
--- 9) Frostbolt as the filler, also with Fingers of Frost (Shatter crit).
+-- 5) Frostbolt while Fingers of Frost is up or the target is frozen (not moving; Shatter crit).
+-- 6) Cold Snap (known, in combat with a target) when Deep Freeze has more than 15 s left and Icy
+--    Veins is on cooldown and not active, so it buys a second Icy Veins, Deep Freeze and pet.
+-- 7) Frostfire Bolt while Brain Freeze ("Fireball!") is up: instant and free, also while moving
+--    (Fireball while Frostfire Bolt is not known). Order 4-7 as in SimC 3.3 (sc_mage.cpp).
+-- 8) Moving: Ice Lance with Fingers of Frost or a frozen target, else Fire Blast, else Ice Lance.
+-- 9) Evocation (in combat) below 30% mana (rare for Frost; placed above the filler so it shows).
+-- 10) Frostbolt as the filler.
 function M.FrostReco(F, moving)
     local missing = F.maxMana - F.mana
-    if F.elemReady and not F.petUp then
+    if F.elemReady and not F.petUp and F.inCombat then
         return "elem", true, string.format(L("Kein Begleiter: %s"), spells.elem)
+    elseif F.elemReady and not F.petUp and F.targetOK then -- out of combat only before a pull
+        return "elem", false, string.format(L("Vor dem Pull: %s"), spells.elem)
     elseif F.cdsAllowed and (F.ivReady or F.mirrorReady or F.trinketReady) then
         local note
         if F.t10 and F.mirrorReady then note = string.format(L("%s zuerst (T10: +18%% Schaden)"), spells.mirror)
@@ -3592,12 +3628,17 @@ function M.FrostReco(F, moving)
     elseif F.inCombat and F.gemReady and missing >= M.MANA_GEM_YIELD then
         return "gem", true, string.format(L("Manastein: %d Mana fehlen"), missing)
     elseif F.targetOK and F.dfReady and (F.fof or F.frozen) then
-        if F.fof then return "dfreeze", true, string.format(L("%s aktiv: %s"), F.fofName or "FoF", spells.dfreeze) end
+        if F.fof then return "dfreeze", true, string.format(L("%s aktiv: %s"), M.ProcName(F.fofName, 74396, "Eisige Finger"), spells.dfreeze) end
         return "dfreeze", true, string.format(L("Ziel eingefroren: %s"), spells.dfreeze)
-    elseif F.cdsAllowed and F.csReady and F.dfKnown and F.dfCD > M.COLD_SNAP_DF and F.dfCD < 999 then
+    elseif not moving and F.fof then
+        return "fbolt", false, string.format(L("%s aktiv: %s"), M.ProcName(F.fofName, 74396, "Eisige Finger"), spells.fbolt)
+    elseif not moving and F.frozen then
+        return "fbolt", false, string.format(L("Ziel eingefroren: %s"), spells.fbolt)
+    elseif F.cdsAllowed and F.csReady and F.dfKnown and F.dfCD > M.COLD_SNAP_DF and F.dfCD < 999
+        and not F.ivReady and not F.ivUp and F.ivCD < 999 then
         return "csnap", true, string.format(L("%s: %s-Abklingzeit %.0fs"), spells.csnap, spells.dfreeze, F.dfCD)
-    elseif F.targetOK and F.bf and F.ffbKnown then
-        return "ffb", true, string.format(L("%s aktiv: %s"), F.bfName or "Brain Freeze", spells.ffb)
+    elseif F.targetOK and F.bf then
+        return "ffb", true, string.format(L("%s aktiv: %s"), M.ProcName(F.bfName, 57761, "Hirnfrost"), M.BrainFreezeSpell())
     elseif moving and F.targetOK and F.ilanceKnown and (F.fof or F.frozen) then
         return "ilance", false, string.format(L("Bewegung: %s"), spells.ilance)
     elseif moving and cfg.showMovementFireBlast and F.fireblastUsable then
@@ -3606,8 +3647,6 @@ function M.FrostReco(F, moving)
         return "ilance", false, string.format(L("Bewegung: %s"), spells.ilance)
     elseif F.inCombat and F.evoReady and F.manaPct < M.EVO_BELOW * 100 then
         return "evo", true, string.format(L("%s: Mana %d%%"), spells.evo, F.manaPct)
-    elseif F.fof then
-        return "fbolt", false, string.format(L("%s aktiv: %s"), F.fofName or "FoF", spells.fbolt)
     end
     return "fbolt", false, string.format(L("Füller: %s"), spells.fbolt)
 end
@@ -4206,7 +4245,7 @@ local function SetupOptions(db)
             spellsteal = { type = "group", name = L("Zauberraub"), order = 2.7, get = get,
                 set = function(info, v) cfg[info[#info]] = v; M.RescanSteal() end, args = {
                 help = { type = "description", order = 1, fontSize = "medium",
-                    name = L("Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt auf Mouseover, sonst aufs Ziel. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels.") },
+                    name = L("Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt aufs Ziel, mit Shift auf Mouseover. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels.") },
                 spellsteal = toggle(L("Zauberraub empfehlen"), 2),
                 spellstealAll = toggle(L("Auch nicht gelistete stehlbare Buffs empfehlen (nicht dringend)"), 3),
             } },
