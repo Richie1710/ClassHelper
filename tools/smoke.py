@@ -1330,19 +1330,122 @@ fight(); hp(70)
 gasCast("0xF130001234000001"); upd(); check(reco() ~= "invis", "71617 from another NPC: ignored")
 BOSSES.boss1.guid = "0xF130001234000001"; TARGETGUID = "GUID-x"; hp(80.9); check(reco() ~= "invis", "not Putricide: no trigger")
 BOSSES.boss1.guid = PG; TARGETGUID = PG; hp(70)
-gasCast(); upd(); check(reco() == "invis" and st("invis") == "urgent", "cast start fallback: urgent Invisibility")
+gasCast(); upd()
+check(reco() ~= "invis" and reco() ~= nil and st("invis") == "prep" and has(info(), "Tränengas wird gewirkt - Unsichtbarkeit vermutlich zu spät", "Tear Gas is being cast - Invisibility probably too late"),
+  "cast start fallback: not urgent, blue button + hint, rotation goes on (" .. tostring(reco()) .. ") " .. info())
 show("FALLBACK")
-upd(22); check(reco() ~= "invis", "3 s after the cast: too late, nothing")
+upd(22); check(reco() ~= "invis" and st("invis") ~= "prep", "3 s after the cast: too late, nothing")
 DEBUFFS.player = { { GAS, 0, GetTime() + 18, 71615 } }; upd(); check(reco() ~= "invis" and reco() ~= nil, "stunned anyway: no Tear Gas recommendation")
 DEBUFFS.player = {}; fight()
 CASTING.boss1 = { GAS, GetTime() * 1000, GetTime() * 1000 + 2500 }; upd()
-check(reco() == "invis", "UnitCastingInfo fallback (name from GetSpellInfo)")
+check(reco() ~= "invis" and st("invis") == "prep", "UnitCastingInfo fallback (name from GetSpellInfo): blue hint")
 CASTING.boss1 = nil
-COOLDOWNS[INVIS] = 100; fight(); gasCast(); upd(); check(reco() ~= "invis", "Invisibility on cooldown: no fallback")
+COOLDOWNS[INVIS] = 100; fight(); gasCast(); upd(); check(reco() ~= "invis" and st("invis") == "normal" and not has(info(), "zu spät", "too late"), "Invisibility on cooldown: no fallback")
 upd(300); check(not has(info(), "Seuchenmord", "Putricide"), "timeout ends the transition")
 COOLDOWNS = {}; hp(80.9); invisible(true); upd(); check(reco() == nil, "invisible in the window: wait")
 INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); invisible(false); hp(70)
 check(reco() ~= nil, "combat end: back to the rotation")
+
+local function iceBlock(on) AURAS.player = on and { { ICE, 0, GetTime() + 10, 45438 } } or {} end
+local function press(spell) FireEvent("UNIT_SPELLCAST_SENT", "player", spell, "", "") end
+local HYPO = { S(41425), 0, GetTime() + 600, 41425 }
+local function concoction() CL("SPELL_CAST_START", PG, PN, 0xa48, "", nil, 0x80000000, 71621, "Create Concoction", 8) end
+
+-- Ice Block from the threat check: no "cancel Ice Block" until it ends, then "stop casting" while the threat stays high
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); COOLDOWNS = {}; MH.db.profile.iceCancelHelper = true; hp(80.2)
+gasCast(); upd(18); BOSSES.boss1.hp = 79.5
+concoction(); upd(); upd(52) -- 1.7 s before the re-engage: threat window
+THREAT.boss1 = { true, 3, 100, 100 }; upd()
+check(reco() == "ice" and st("ice") == "urgent", "threat window: Ice Block (" .. tostring(reco()) .. ")")
+press(ICE); iceBlock(true); COOLDOWNS[ICE] = 300; upd()
+check(reco() == nil and st("ice") ~= "urgent", "Ice Block from the threat check: wait, no cancel (" .. tostring(reco()) .. ") " .. info())
+CL("SPELL_CAST_SUCCESS", PG, PN, 0xa48, "", nil, 0x80000000, 71620, GAS, 8); upd(30)
+check(reco() == nil and st("ice") ~= "urgent" and not has(info(), "EISBLOCK ABBRECHEN", "CANCEL ICE BLOCK"), "re-engaged 4.5 s ago, still in Ice Block: no cancel hint (" .. tostring(reco()) .. ") " .. info())
+iceBlock(false); DEBUFFS.player = { HYPO }; upd()
+check(reco() == nil and has(info(), "Bedrohung: Stop casten", "Threat: stop casting"), "Ice Block over, threat still high: stop casting: " .. info())
+show("ICEEND")
+upd(22); check(not has(info(), "Seuchenmord", "Putricide") and not has(info(), "Bedrohung: Stop", "Threat: stop"), "3 s after Ice Block: Tear Gas helper done: " .. info())
+
+-- Hypothermia: no Ice Block from an existing boss skip ...
+THREAT.boss1 = nil; COOLDOWNS = {}
+DEBUFFS.player = { { "Boiling Blood", 0, GetTime() + 20, 72385 } }; upd()
+check(reco() == "ice", "Boiling Blood: Ice Block skip (" .. tostring(reco()) .. ")")
+DEBUFFS.player[2] = HYPO; upd()
+check(reco() ~= "ice" and has(info(), "Eisblock CD", "Ice Block on CD"), "Boiling Blood with Hypothermia: no Ice Block: " .. info())
+-- ... nor from the Tear Gas threat check
+DEBUFFS.player = {}; fight(); hp(80.2); gasCast(); upd(18); BOSSES.boss1.hp = 79.5; concoction(); upd(); upd(52)
+DEBUFFS.player = { HYPO }; THREAT.boss1 = { true, 3, 100, 100 }; upd()
+check(reco() ~= "ice" and has(info(), "Bedrohung hoch", "High threat"), "Tear Gas threat check with Hypothermia: stop casting, no Ice Block: " .. info())
+DEBUFFS.player = {}; THREAT.boss1 = nil
+
+-- invisible before the gas, outside the lead window: wait, and the analyzer does not ask to cancel
+fight(); COOLDOWNS = {}; hp(81.8); invisible(true); COOLDOWNS[INVIS] = 180; upd()
+check(reco() == nil and has(info(), "Unsichtbar: warten auf Tränengas", "Invisible: wait for Tear Gas"), "invisible at 81.8% (above the 1% lead): wait: " .. info())
+check(MageHelperAnalyzer_GetPriorityOverride() == nil, "analyzer override quiet at 81.8% before the gas")
+hp(79.6)
+check(reco() == nil and has(info(), "Unsichtbar: warten auf Tränengas", "Invisible: wait for Tear Gas"), "invisible at 79.6% before the cast: wait: " .. info())
+check(MageHelperAnalyzer_GetPriorityOverride() == nil, "analyzer override quiet at 79.6% before the gas")
+gasCast(); upd(18)
+check(reco() == "invis" and MageHelperAnalyzer_GetPriorityOverride() ~= nil, "gas landed: cancel Invisibility (helper and analyzer)")
+fight(); hp(70); upd()
+check(reco() == "invis" and MageHelperAnalyzer_GetPriorityOverride() ~= nil, "invisible at 70% (no gas coming): analyzer cancel hint as before")
+invisible(false); COOLDOWNS = {}
+
+-- trigger from the measured health loss: fast -> earlier than the % lead, slow -> the % lead
+local function drain(to, perSec) while BOSSES.boss1.hp > to do BOSSES.boss1.hp = BOSSES.boss1.hp - perSec * 0.15; Tick(0.15) end end
+fight(); BOSSES.boss1.hp = 92
+drain(85.2, 1.6)
+check(reco() ~= "invis" and st("invis") == "prep" and has(info(), "84.0%", "84.0%"), "fast loss 1.6 %/s: pre-warning names the trigger 84.0% (80 + 1.6 * 2.5): " .. info())
+show("RATE")
+drain(83.95, 1.6)
+check(reco() == "invis" and st("invis") == "urgent", "fast loss: urgent Invisibility at " .. BOSSES.boss1.hp .. "% (1% lead alone: 81%)")
+fight(); BOSSES.boss1.hp = 83
+drain(81.2, 0.2)
+check(reco() ~= "invis" and st("invis") == "prep" and has(info(), "81.0%", "81.0%"), "slow loss 0.2 %/s: the 1% lead counts, trigger 81.0%: " .. info())
+drain(80.95, 0.2)
+check(reco() == "invis", "slow loss: urgent below 81%")
+
+-- double press: no cancel within 1.2 s after the press
+fight(); COOLDOWNS = {}; hp(70)
+press(ICE); iceBlock(true); COOLDOWNS[ICE] = 300; upd()
+check(reco() ~= "ice" and st("ice") ~= "urgent", "Ice Block just pressed: no 'cancel Ice Block' (" .. tostring(reco()) .. ")")
+upd(7)
+check(reco() == "ice" and has(info(), "EISBLOCK ABBRECHEN", "CANCEL ICE BLOCK"), "1.2 s later the generic cancel hint is back: " .. info())
+iceBlock(false); COOLDOWNS = {}
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", INVIS, "", ""); AURAS.player = { { INVIS, 0, GetTime() + 3, 66 } }; COOLDOWNS[INVIS] = 180; upd()
+check(reco() ~= "invis" and MageHelperAnalyzer_GetPriorityOverride() == nil, "Invisibility just cast (fading): no 'cancel Invisibility' (" .. tostring(reco()) .. ")")
+upd(7); check(reco() == "invis", "away from the gas the analyzer's cancel hint comes back after 1.2 s")
+invisible(false); COOLDOWNS = {}
+fight(); hp(80.9); check(reco() == "invis", "Tear Gas trigger")
+press(INVIS); upd()
+check(reco() == nil and st("invis") ~= "urgent", "Invisibility sent, no aura yet: wait, no second urgent press")
+AURAS.player = { { INVIS, 0, GetTime() + 3, 66 } }; COOLDOWNS[INVIS] = 180; upd(10)
+check(reco() == nil, "fading: wait")
+invisible(false); COOLDOWNS = {}
+
+-- Putricide as focus
+fight(); local savedBosses = BOSSES; BOSSES = {}; TARGETGUID = "GUID-x"; FOCUS = { name = PN, guid = PG, hp = 80.9 }; upd()
+check(reco() == "invis" and st("invis") == "urgent", "Putricide as focus: trigger (" .. tostring(reco()) .. ")")
+FOCUS = nil; BOSSES = savedBosses; TARGETGUID = PG
+
+-- Invisibility drops combat mid-fight (some cores): transition and analyzer run survive
+fight(); COOLDOWNS = {}; upd(40)
+local fights = MH.db.char.analyzer.bossFights
+local first = fights[1]
+hp(80.9); invisible(true); COOLDOWNS[INVIS] = 180; gasCast(); upd(18)
+BOSSES.boss1.combat = true; INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(MH.db.char.analyzer.bossFights[1] == first and reco() == "invis" and has(info(), "greift in", "re-engages in"), "out of combat while invisible, Putricide fighting: run and transition kept: " .. info())
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); invisible(false); upd()
+check(has(info(), "greift in", "re-engages in"), "back in combat: same transition: " .. info())
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")
+check(MH.db.char.analyzer.bossFights[1] ~= first, "real fight end saves the run")
+first = MH.db.char.analyzer.bossFights[1]
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd(40); invisible(true)
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(MH.db.char.analyzer.bossFights[1] == first, "held while invisible and Putricide in combat")
+BOSSES.boss1.combat = false; upd()
+check(MH.db.char.analyzer.bossFights[1] ~= first, "Putricide out of combat: the held fight end runs")
+BOSSES.boss1.combat = nil; invisible(false); COOLDOWNS = {}
 
 check(#ERRORS == errors, "no Lua errors (protected frames untouched in combat)")
 INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")

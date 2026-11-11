@@ -34,6 +34,7 @@ local SPELLS = {
   [53762]={"Unzerst\195\182rbar","Indestructible"}, [43186]={"Mana wiederherstellen","Restore Mana"},
   -- Professor Putricide: Tear Gas cast and stun
   [71617]={"Tr95tnengas","Tear Gas"}, [71615]={"Tr95tnengas","Tear Gas"},
+  [41425]={"Unterk\195\188hlung","Hypothermia"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -159,10 +160,11 @@ BOSSES = {}
 function UnitHealth(u)
   if u == "target" then return TARGET_HP end
   if BOSSES[u] then return BOSSES[u].hp or 100 end
+  if u == "focus" and FOCUS then return FOCUS.hp or 100 end
   return 100
 end
 function UnitHealthMax() return 100 end
--- focus: FOCUS = { name=, hostile=, dead= } or nil (no focus); PET = true while the player's pet (Water Elemental) is out
+-- focus: FOCUS = { name=, hostile=, dead=, guid=, hp= } or nil (no focus); PET = true while the player's pet (Water Elemental) is out
 PET = false
 function UnitExists(u) return (u == "target" and not NOTARGET) or (u == "focus" and FOCUS ~= nil) or (u == "pet" and PET == true) or raidEntry(u) ~= nil or BOSSES[u] ~= nil end
 function UnitIsDead(u)
@@ -188,13 +190,18 @@ function UnitIsUnit(a, b) return a == b or (UnitName(a) ~= nil and UnitName(a) =
 function UnitGUID(u)
   if u == "target" then return TARGETGUID or ("GUID-" .. (TARGETNAME or "target")) end
   if BOSSES[u] then return BOSSES[u].guid or ("GUID-" .. BOSSES[u].name) end
+  if u == "focus" and FOCUS and FOCUS.guid then return FOCUS.guid end
   local e = raidEntry(u)
   if e and e.name == "Kahuchan" then return "GUID-player" end
   return e and ("GUID-" .. e.name) or ("GUID-" .. u)
 end
 function UnitClass(u) local e = raidEntry(u); if e then return e.class, e.class end end
 function UnitIsConnected(u) local e = raidEntry(u); return e ~= nil and e.online ~= false end
-function UnitAffectingCombat() return INCOMBAT end
+-- BOSSES[u].combat = true/false overrides INCOMBAT for that boss (player out of combat, boss still fighting)
+function UnitAffectingCombat(u)
+  if BOSSES[u] and BOSSES[u].combat ~= nil then return BOSSES[u].combat end
+  return INCOMBAT
+end
 -- CASTING[unit] = { name, startMS, endMS } (3.3.5: name, subText, text, icon, startTime, endTime, ...; no spell ID)
 CASTING = {}
 function UnitCastingInfo(u)
