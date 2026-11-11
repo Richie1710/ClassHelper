@@ -1,11 +1,14 @@
 ## Interface: 30300
 ## Title: ClassHelper
-## Notes: Class rotation helper for WotLK 3.3.5 (Mage: Fire, Arcane, Frost) with buff bar, raid helpers and analyzer
-## Notes-deDE: Klassen-Rotationshelfer für WotLK 3.3.5 (Magier: Feuer, Arkan, Frost) mit Buff-Leiste, Raid-Hilfen und Analyzer
+## Notes: Class rotation helper for WotLK 3.3.5 (Mage: Fire, Arcane, Frost; Paladin: Protection, Retribution) with buff bar, raid helpers and analyzer
+## Notes-deDE: Klassen-Rotationshelfer für WotLK 3.3.5 (Magier: Feuer, Arkan, Frost; Paladin: Schutz, Vergeltung) mit Buff-Leiste, Raid-Hilfen und Analyzer
 ## Author: Kahu/Shiro
 ## Version: 4.0
-## OptionalDeps: Ace3
+## OptionalDeps: Ace3, PallyPower
 ## SavedVariables: ClassHelperDB
 ## SavedVariablesPerCharacter: ClassHelperLegacyDB
 embeds.xml
 ClassHelper.lua
+Classes\Paladin.lua
+Classes\PaladinProt.lua
+Classes\PaladinRet.lua

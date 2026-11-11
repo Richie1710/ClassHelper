@@ -1,6 +1,6 @@
 # ClassHelper
 
-Class rotation helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (Interface 30300), made for private servers. Works on German and English clients. It picks the module for your class and the rotation for your spec automatically. Currently: **Mage** (Fire, Arcane, Frost). Formerly called *MageHelper*.
+Class rotation helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (Interface 30300), made for private servers. Works on German and English clients. It picks the module for your class and the rotation for your spec automatically. Currently: **Mage** (Fire, Arcane, Frost) and **Paladin** (Protection, Retribution, Holy buff bar; the Paladin rotations are still being built). Other classes get the shared parts (buff bar with flask and food, analyzer). Formerly called *MageHelper*.
 
 *Deutsche Kurzfassung weiter unten.*
 
@@ -20,6 +20,14 @@ Class rotation helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (
 - **Analyzer:** boss fight and training-dummy runs with A/B comparison, fight report and death recap.
 - **Color themes:** Standard, Pink, Blue and Red for bars and windows. Signal colors (green, red, orange, blue) never change, and all themes keep readable contrast.
 - **Settings window and profiles** (Ace3): `/ch config` or *Interface → AddOns → ClassHelper*. Every character starts with its own profile; profiles can be shared or copied.
+
+## Paladin
+
+- **Mode by talents:** Protection and Retribution get their own button sets, Holy only the buff bar. Fixed with `/ch rota auto|prot|ret|holy` or in the settings.
+- **Buttons:** secure buttons with fixed macros; only the glow shows the recommendation. Protection: taunt (Hand of Reckoning, Righteous Defense on the boss's target) and defensive buttons first, then Righteous Fury, seal, Seal of Command for AoE, Holy Shield, Judgement, Hammer of the Righteous, Consecration, Shield of Righteousness, Hammer of Wrath, Avenger's Shield, Divine Plea. Retribution: seal, Seal of Command, Avenging Wrath, Judgement, Crusader Strike, Divine Storm, Consecration, Hammer of Wrath, Exorcism, Holy Wrath, Divine Plea.
+- **Judgement:** Wisdom or Light (`/ch judgement wisdom|light`). **AoE mode:** `/ch aoe on|off`.
+- **Buff bar:** seal, aura, Righteous Fury (Protection: missing = red; otherwise red while active, a click cancels it), Holy Shield and Divine Plea (Protection), flask (Stoneblood for Protection, Endless Rage for Retribution), food, and one icon per blessing you should have.
+- **PallyPower (optional):** if [PallyPower](https://www.curseforge.com/wow/addons/pally-power) is loaded, ClassHelper reads (never changes) your seal, aura and Righteous Fury setting and the blessings assigned to you there. Switch it off with `/ch pallypower off` or in the settings; without PallyPower your own defaults are used (Seal of Vengeance / Corruption, Devotion or Retribution Aura, Kings + Sanctuary or Kings + Might). `/ch pal` shows what is used.
 
 ## Installation
 
@@ -45,7 +53,9 @@ Ace3 is embedded – no other addons are required.
 | --- | --- |
 | `/ch help` | List all commands |
 | `/ch config` | Open the settings window |
-| `/ch rota auto\|fire\|arcane\|frost` | Rotation: automatic by talents, or fixed |
+| `/ch rota auto\|fire\|arcane\|frost` | Rotation: automatic by talents, or fixed (Paladin: `auto\|prot\|ret\|holy`) |
+| `/ch judgement wisdom\|light`, `/ch aoe on\|off` | Paladin: Judgement, AoE mode |
+| `/ch pallypower on\|off`, `/ch pal` | Paladin: use PallyPower's settings; show seal, aura and blessings in use |
 | `/ch burn auto\|mana [percent]` | Arcane burn/conserve: time-to-die estimate or mana threshold only (10–90%) |
 | `/ch steal on\|off\|all\|worth` | Spellsteal hint on/off; *all* also recommends unlisted stealable buffs, *worth* only the list (German: `/ch raub an\|aus\|alle\|lohnend`) |
 | `/ch fm` | Open the Focus Magic target picker |
@@ -110,7 +120,7 @@ Helfer für Feuer-, Arkan- und Frostmagier in **WotLK 3.3.5a**, für deutsche un
 - **Analyzer**
 - **Einstellungsfenster mit Profilen** (`/ch config`)
 
-Klassen-Rotationshelfer für WotLK 3.3.5a, früher *MageHelper*. Er wählt das Modul passend zu Klasse und Skillung; derzeit **Magier** (Feuer, Arkan, Frost).
+Klassen-Rotationshelfer für WotLK 3.3.5a, früher *MageHelper*. Er wählt das Modul passend zu Klasse und Skillung; derzeit **Magier** (Feuer, Arkan, Frost) und **Paladin** (Schutz, Vergeltung, Heilig nur Buff-Leiste; die Paladin-Rotas entstehen noch). Paladine: Buttons und Buff-Leiste je Skillung, Richturteil wählbar (`/ch richturteil weisheit|licht`), AoE-Modus (`/ch aoe an|aus`); ist **PallyPower** geladen, werden Siegel, Aura, Zorn der Gerechtigkeit und die dir zugewiesenen Segen von dort gelesen (nie verändert, abschaltbar mit `/ch pallypower aus`).
 
 **Installation:**
 1. `ClassHelper-vX.Y.zip` aus dem [neuesten Release](https://github.com/Richie1710/ClassHelper/releases/latest) laden und nach `Interface\AddOns\` entpacken – der Ordner `ClassHelper` ist schon drin.

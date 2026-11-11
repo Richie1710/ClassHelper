@@ -35,6 +35,36 @@ local SPELLS = {
   -- Professor Putricide: Tear Gas cast and stun
   [71617]={"Tr\195\164nengas","Tear Gas"}, [71615]={"Tr\195\164nengas","Tear Gas"},
   [41425]={"Unterk\195\188hlung","Hypothermia"},
+  -- Paladin (all ranks share the name, like the client)
+  [25780]={"Zorn der Gerechtigkeit","Righteous Fury"},
+  [20164]={"Siegel der Gerechtigkeit","Seal of Justice"}, [20165]={"Siegel des Lichts","Seal of Light"},
+  [20166]={"Siegel der Weisheit","Seal of Wisdom"}, [21084]={"Siegel der Rechtschaffenheit","Seal of Righteousness"},
+  [53720]={"Siegel des M\195\164rtyrers","Seal of the Martyr"}, [31801]={"Siegel der Vergeltung","Seal of Vengeance"},
+  [20375]={"Siegel des Befehls","Seal of Command"}, [53736]={"Siegel der Verderbnis","Seal of Corruption"},
+  [31892]={"Siegel des Blutes","Seal of Blood"},
+  [465]={"Aura der Hingabe","Devotion Aura"}, [48942]={"Aura der Hingabe","Devotion Aura"},
+  [7294]={"Aura der Vergeltung","Retribution Aura"}, [54043]={"Aura der Vergeltung","Retribution Aura"},
+  [19746]={"Aura der Konzentration","Concentration Aura"}, [19876]={"Aura des Schattenwiderstands","Shadow Resistance Aura"},
+  [19888]={"Aura des Frostwiderstands","Frost Resistance Aura"}, [19891]={"Aura des Feuerwiderstands","Fire Resistance Aura"},
+  [32223]={"Aura des Kreuzfahrers","Crusader Aura"},
+  [19742]={"Segen der Weisheit","Blessing of Wisdom"}, [48936]={"Segen der Weisheit","Blessing of Wisdom"},
+  [25894]={"Gro\195\159er Segen der Weisheit","Greater Blessing of Wisdom"}, [48938]={"Gro\195\159er Segen der Weisheit","Greater Blessing of Wisdom"},
+  [19740]={"Segen der Macht","Blessing of Might"}, [48932]={"Segen der Macht","Blessing of Might"},
+  [25782]={"Gro\195\159er Segen der Macht","Greater Blessing of Might"}, [48934]={"Gro\195\159er Segen der Macht","Greater Blessing of Might"},
+  [20217]={"Segen der K\195\182nige","Blessing of Kings"}, [25898]={"Gro\195\159er Segen der K\195\182nige","Greater Blessing of Kings"},
+  [20911]={"Segen des Refugiums","Blessing of Sanctuary"}, [25899]={"Gro\195\159er Segen des Refugiums","Greater Blessing of Sanctuary"},
+  [62124]={"Hand der Abrechnung","Hand of Reckoning"}, [31789]={"Rechtschaffene Verteidigung","Righteous Defense"},
+  [498]={"G\195\182ttlicher Schutz","Divine Protection"}, [642]={"Gottesschild","Divine Shield"},
+  [48788]={"Handauflegung","Lay on Hands"}, [25771]={"Vorahnung","Forbearance"},
+  [48952]={"Heiliger Schild","Holy Shield"}, [54428]={"G\195\182ttliche Bitte","Divine Plea"},
+  [53595]={"Hammer der Rechtschaffenen","Hammer of the Righteous"}, [48819]={"Weihe","Consecration"},
+  [61411]={"Schild der Rechtschaffenheit","Shield of Righteousness"}, [48806]={"Hammer des Zorns","Hammer of Wrath"},
+  [48827]={"Schild des R\195\164chers","Avenger's Shield"},
+  [53408]={"Richturteil der Weisheit","Judgement of Wisdom"}, [20271]={"Richturteil des Lichts","Judgement of Light"},
+  [31884]={"Zornige Vergeltung","Avenging Wrath"}, [35395]={"Kreuzfahrersto\195\159","Crusader Strike"},
+  [53385]={"G\195\182ttlicher Sturm","Divine Storm"}, [48801]={"Exorzismus","Exorcism"}, [48817]={"Heiliger Zorn","Holy Wrath"},
+  [59578]={"Die Kunst des Krieges","The Art of War"}, [53489]={"Die Kunst des Krieges","The Art of War"},
+  [53758]={"Fl\195\164schchen des Steinbluts","Flask of Stoneblood"}, [53760]={"Fl\195\164schchen des endlosen Zorns","Flask of Endless Rage"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -105,7 +135,7 @@ LOGGEDIN = false
 function IsLoggedIn() return LOGGEDIN end
 function GetRealmName() return "Rising-Gods" end
 function UnitRace() return "Gnom", "Gnome" end
-function UnitFactionGroup() return "Alliance", "Allianz" end
+function UnitFactionGroup() if FACTION == "Horde" then return "Horde", "Horde" end return "Alliance", "Allianz" end
 function GetScreenWidth() return 1920 end
 function GetScreenHeight() return 1080 end
 function GetCursorPosition() return 0, 0 end
@@ -415,9 +445,10 @@ setmetatable(_G, { __index = function(t, k)
   return nil
 end })
 
-local addonTable = {}
+-- The addon's private table (second vararg of every file); tests reach the class modules via ADDONTABLE.M.
+ADDONTABLE = {}
 function LoadAddonFile(code, name, addonName)
   local fn, err = loadstring(code, "@" .. name)
   if not fn then error("SYNTAX: " .. err) end
-  fn(addonName, addonTable)
+  fn(addonName, ADDONTABLE)
 end

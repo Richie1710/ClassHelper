@@ -11,6 +11,18 @@ local cfg, chr
 -- Constants and state of the newer features (T9 swap, flask choice, themes). Grouped in one table
 -- because Lua 5.1 allows at most 200 local variables in a file's main chunk.
 local M = {}
+-- Class modules (Classes\*.lua, loaded after this file) reach M through the addon's private table.
+select(2, ...).M = M
+-- Player class, set once at login (MH:OnInitialize). Every Mage feature (rotations, Spellsteal,
+-- T9 swap, Focus Magic, Tear Gas, mage buff entries) runs only for "MAGE"; other classes get their
+-- module from M.CLASS_MODULES (registered by the class files) or only the shared parts.
+M.CLASS_MODULES = {}
+function M.IsMage() return M.CLASS == nil or M.CLASS == "MAGE" end
+-- Calls the class module's function `name` if it has one (events, slash commands, layout hooks).
+function M.ClassCall(name, ...)
+    local mod = M.classMod
+    if mod and mod[name] then return mod[name](...) end
+end
 
 local defaults = {
     profile = {
@@ -424,6 +436,9 @@ local L_EN = {
     ["Füller: %s"] = "Filler: %s",
     ["fehlt"] = "missing",
     ["Dauer: %.0fs  Frost-Rota: keine Feuerball-Wertung"] = "Duration: %.0fs  Frost rotation: no Fireball rating",
+    -- class modules (shared texts; the modules add their own keys to M.L_EN)
+    ["Dauer: %.0fs"] = "Duration: %.0fs",
+    ["ClassHelper: Nur für Magier."] = "ClassHelper: Mage only.",
 }
 local useEnglish = GetLocale() ~= "deDE"
 local function L(s)
@@ -631,6 +646,11 @@ local function PrintFightReport(force)
     if dur <= 5 and not force then return end
     local fbpm = dur > 0 and (fightStats.fireballs / dur * 60) or 0
     print(L("|cffff7d0aClassHelper Fight-Report|r"))
+    if not M.IsMage() then
+        print(string.format(L("Dauer: %.0fs"), dur))
+        if next(fightStats.reason or {}) then print(L("Häufigste Empfehlungen/Gründe:")); PrintTopReasons() end
+        return
+    end
     if M.activeRota == "arcane" or M.activeRota == "frost" then -- Fireballs and their rating mean nothing there
         print(string.format(M.activeRota == "frost" and L("Dauer: %.0fs  Frost-Rota: keine Feuerball-Wertung") or L("Dauer: %.0fs  Arkan-Rota: keine Feuerball-Wertung"), dur))
         print(string.format(L("Spiegelbilder: %d  Eisblock: %d"), fightStats.mirrors or 0, fightStats.iceblocks or 0))
@@ -1752,7 +1772,7 @@ local function BackToPartner()
 end
 
 local function CreateBuffButton(parent, data)
-    local btn = CreateFrame("Button", "ClassHelperBuff_"..data.key, parent, data.cast and "SecureActionButtonTemplate" or nil)
+    local btn = CreateFrame("Button", "ClassHelperBuff_"..data.key, parent, (data.cast or data.macro) and "SecureActionButtonTemplate" or nil)
     btn:SetWidth(34); btn:SetHeight(34)
     btn.data = data
     btn.icon = btn:CreateTexture(nil, "BACKGROUND")
@@ -1808,10 +1828,15 @@ local function CreateBuffButton(parent, data)
     elseif data.cast then
         btn:SetAttribute("type", "spell")
         btn:SetAttribute("spell", data.cast)
+    elseif data.macro then -- class modules: fixed macro text (changed by them only out of combat)
+        btn:SetAttribute("type", "macro")
+        btn:SetAttribute("macrotext", data.macro)
+        btn:RegisterForClicks("LeftButtonUp")
     end
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText(L(self.data.label))
+        if self.data.tooltip then self.data.tooltip(self); GameTooltip:Show(); return end -- class modules
         -- names lists are {German, English, ...}; show the buff name in the display language.
         local buffName = (self.data.iconSpellId and GetSpellInfo(self.data.iconSpellId)) or self.data.names[useEnglish and 2 or 1]
         if self.data.special == "flask" then buffName = FlaskChoiceText() end
@@ -2153,11 +2178,27 @@ local function CreateBuffBar()
     ThemeTitle(buffBar.title)
     buffBar.title:SetPoint("BOTTOMLEFT", buffBar, "TOPLEFT", 4, 2)
     buffBar.title:SetText("ClassHelper Buffs")
+    -- Entries: the mage list, a class module's list (BuffList), or only the shared flask/food.
+    if M.IsMage() then M.buffList = buffChecks
+    else
+        M.SHARED_BUFFS = {}
+        for _, data in ipairs(buffChecks) do
+            if data.key == "flask" or data.key == "food" then table.insert(M.SHARED_BUFFS, data) end
+        end
+        M.buffList = M.ClassCall("BuffList") or M.SHARED_BUFFS
+    end
     local x = 8
-    for _, data in ipairs(buffChecks) do
+    for _, data in ipairs(M.buffList) do
         local b = CreateBuffButton(buffBar, data)
         b:SetPoint("TOPLEFT", buffBar, "TOPLEFT", x, -8)
         x = x + 43
+    end
+    if not M.IsMage() then
+        M.buffBar = buffBar
+        buffBar:SetWidth(x + 8); buffBar:SetHeight(58)
+        M.ClassCall("LayoutBuffs", M.activeRota) -- the module shows the entries of the active mode
+        if not cfg.buffBarShown then buffBar:Hide() end
+        return
     end
 
     -- Opens the Focus Magic target picker. Not a secure button: it only chooses the target of FM OUT.
@@ -2209,6 +2250,18 @@ local function CreateUI()
     KR.bg:SetTexture(0,0,0,0.35)
     ThemePanel(KR, 0.35, true)
 
+    if M.IsMage() then M.CreateMageButtons() else M.ClassCall("CreateButtons") end
+    M.LayoutRota(M.DesiredRota())
+    if M.IsMage() then M.CreateStealIndicator() end
+
+    local ob = CreateOneButton(KR)
+    ob:SetPoint("TOPRIGHT", KR, "TOPRIGHT", -10, -18)
+    if not M.IsMage() then M.OneButtonIdle("") end
+    M.CreateBarTexts()
+end
+
+-- Mage rotation buttons (Fire, Arcane, Frost sets; M.LayoutRota shows the active one).
+function M.CreateMageButtons()
     local order = {
         {"lb", "LB", spells.lb},
         {"pyro", "Pyro", spells.pyro},
@@ -2260,12 +2313,10 @@ local function CreateUI()
     -- Shift on a hostile mouseover (e.g. the focus mob).
     CreateSpellButton(KR, "steal", L("Raub"), spells.steal,
         "#showtooltip " .. spells.steal .. "\n/cast [mod:shift,@mouseover,harm,nodead][@target,harm,nodead] " .. spells.steal)
-    M.LayoutRota(M.DesiredRota())
-    M.CreateStealIndicator()
+end
 
-    local ob = CreateOneButton(KR)
-    ob:SetPoint("TOPRIGHT", KR, "TOPRIGHT", -10, -18)
-
+-- Info and debug line, cast-gap overlay, minimap buttons and the buff bar (all classes).
+function M.CreateBarTexts()
     KR.info = KR:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     KR.info:SetPoint("TOPLEFT", KR, "BOTTOMLEFT", 4, -18)
     KR.info:SetJustifyH("LEFT")
@@ -2290,7 +2341,7 @@ local function CreateUI()
     mm:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.minimapX, cfg.minimapY)
     mm.icon = mm:CreateTexture(nil, "BACKGROUND")
     mm.icon:SetAllPoints(mm)
-    mm.icon:SetTexture(select(3, GetSpellInfo(spells.fireball)) or "Interface\\Icons\\Spell_Fire_FlameBolt")
+    mm.icon:SetTexture(select(3, GetSpellInfo(M.classMod and M.classMod.ICON_SPELL or spells.fireball)) or "Interface\\Icons\\Spell_Fire_FlameBolt")
     mm.border = mm:CreateTexture(nil, "OVERLAY")
     mm.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     mm.border:SetWidth(54); mm.border:SetHeight(54)
@@ -2314,7 +2365,7 @@ local function CreateUI()
     bm:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.buffMinimapX, cfg.buffMinimapY)
     bm.icon = bm:CreateTexture(nil, "BACKGROUND")
     bm.icon:SetAllPoints(bm)
-    bm.icon:SetTexture(select(3, GetSpellInfo(spells.molten)) or "Interface\\Icons\\Spell_Fire_Incinerate")
+    bm.icon:SetTexture(select(3, GetSpellInfo(M.classMod and M.classMod.BUFF_ICON_SPELL or spells.molten)) or "Interface\\Icons\\Spell_Fire_Incinerate")
     bm.border = bm:CreateTexture(nil, "OVERLAY")
     bm.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     bm.border:SetWidth(50); bm.border:SetHeight(50)
@@ -2337,7 +2388,7 @@ local function CreateUI()
 
     CreateBuffBar()
 
-    if not cfg.shown then KR:Hide() end
+    if not M.BarWanted() then KR:Hide() end
 end
 
 local function UpdateFireballCount()
@@ -2778,10 +2829,13 @@ M.MISSING_RED = { 1.00, 0.02, 0.02 }
 
 local function UpdateBuffBar()
     if not buffBar or not buffBar:IsShown() then return end
-    for _, data in ipairs(buffChecks) do
+    for _, data in ipairs(M.buffList or buffChecks) do
         local btn = buffButtons[data.key]
         if btn then
-            local active, remain, found = HasBuff("player", data.names, data.ids)
+            local active, remain, found, neutral, warn
+            -- class module entries: check(data, btn) -> active, remain, found, neutral (grey), warn (yellow)
+            if data.check then active, remain, found, neutral, warn = data.check(data, btn)
+            else active, remain, found = HasBuff("player", data.names, data.ids) end
             if data.special == "flask" then
                 active, remain, found = FlaskActive()
                 local key = ExpectedFlasks()[1]
@@ -2790,7 +2844,7 @@ local function UpdateBuffBar()
                     btn.icon:SetTexture((GetItemIcon and GetItemIcon(M.FLASKS[key].item)) or "Interface\\Icons\\INV_Misc_QuestionMark")
                 end
             end
-            local neutral = false -- grey: nothing to check (Runic Mana has no buff, or no potion chosen)
+            neutral = neutral or false -- grey: nothing to check (Runic Mana has no buff, or no potion chosen)
             if data.special == "potion" then
                 local key = M.ExpectedPotion()
                 local p = key and M.POTIONS[key]
@@ -2804,7 +2858,7 @@ local function UpdateBuffBar()
                     active, remain, found, neutral = false, 0, nil, true
                 end
             end
-            local warnSmall = false
+            local warnSmall = (warn and active) and true or false
             local displayName = found
             if data.special == "brilliance" and not active and data.smallNames then
                 local small, smallRemain, smallFound = HasBuff("player", data.smallNames, data.smallIds)
@@ -2824,7 +2878,7 @@ local function UpdateBuffBar()
                 moltenColor = M.MOLTEN_COLORS[state]
                 moltenFill = (not buffUp) and M.MISSING_RED or nil
             else
-                btn.timer:SetText(active and (warnSmall and "AI" or FormatRemain(remain)) or "!")
+                btn.timer:SetText(active and (warnSmall and (data.warnText or "AI") or FormatRemain(remain)) or "!")
             end
             if neutral then
                 btn.timer:SetText("")
@@ -3441,6 +3495,7 @@ M.ROTA_SETS = {
     fire = { "lb", "pyro", "fireball", "comb", "cd", "fb_move", "ice", "invis", "stop", "steal" },
     arcane = { "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop", "steal" },
     frost = { "fbolt", "ilance", "dfreeze", "ffb", "fcd", "csnap", "elem", "gem", "evo", "fb_move", "ice", "invis", "stop", "steal" },
+    none = {}, -- classes without a rotation module (and buff-bar-only modes): the bar stays hidden
 }
 -- Health samples per GUID (boss1-4 and the target, every TTD_STEP s), so switching between boss
 -- units (Blood Prince Council, Twin Val'kyr) or back to an earlier target keeps its history.
@@ -3470,6 +3525,7 @@ end
 -- "fire", "arcane" or "frost": fixed by cfg.rotationMode, or by the talent tree with the most points
 -- (Arcane -> arcane, Frost -> frost; Fire, no talents -> fire).
 function M.DesiredRota()
+    if not M.IsMage() then return M.ClassCall("DesiredRota") or "none" end -- class module (key of M.ROTA_SETS)
     local mode = cfg and cfg.rotationMode or "auto"
     if mode == "fire" or mode == "arcane" or mode == "frost" then return mode end
     local group = GetActiveTalentGroup and GetActiveTalentGroup(false, false) or nil
@@ -3498,7 +3554,17 @@ function M.LayoutRota(rota)
     KR:SetWidth(x + 95)
     M.activeRota = rota
     RebuildSpellMacros()
+    -- a mode without buttons (Holy Paladin, classes without a module) hides the bar
+    local empty = #M.ROTA_SETS[rota] == 0
+    if empty ~= (M.emptyRota or false) then
+        M.emptyRota = empty
+        if M.BarWanted() then KR:Show() else KR:Hide() end
+    end
+    if buffBar then M.ClassCall("LayoutBuffs", rota) end
 end
+
+-- Main bar visible: switched on and the active mode has buttons.
+function M.BarWanted() return cfg.shown and not M.emptyRota end
 
 -- Re-evaluate the rotation (talents, setting, profile). In combat the switch waits for PLAYER_REGEN_ENABLED.
 function M.ApplyRotaMode()
@@ -3511,6 +3577,7 @@ function M.ApplyRotaMode()
 end
 
 function M.RotaName(rota)
+    if not M.IsMage() then return M.ClassCall("RotaName", rota) or "-" end
     if rota == "arcane" then return L("Arkan") elseif rota == "frost" then return L("Frost") end
     return L("Feuer")
 end
@@ -4176,10 +4243,23 @@ function M.UpdateFrost(now, targetOK, moving, utilType, utilNote, utilReady, uti
     end
 end
 
+-- Shared helpers for the class modules (Classes\*.lua). They load after this file, so everything
+-- here exists when they run; cfg/chr are M.cfg/M.chr (set in MH:OnInitialize and MH:ApplyProfile).
+M.L, M.L_EN, M.DEFAULTS, M.spells, M.KR, M.buttons, M.buffButtons = L, L_EN, defaults, spells, KR, buttons, buffButtons
+M.SpellName, M.SpellNames, M.ItemName, M.HasBuff, M.PlayerDebuffFull, M.UnitBuffByNamesOrIds = SpellName, SpellNames, ItemName, HasBuff, PlayerDebuffFull, UnitBuffByNamesOrIds
+M.SpellReady, M.SpellCooldownRemaining, M.SpellUsableNow, M.PlayerMoving = SpellReady, SpellCooldownRemaining, SpellUsableNow, PlayerMoving
+M.CreateSpellButton, M.SetMacro, M.RebuildSpellMacros, M.ButtonSetState, M.MarkRecommended = CreateSpellButton, SetMacro, RebuildSpellMacros, ButtonSetState, MarkRecommended
+M.NoteRecommendation, M.FormatRemain, M.ColorText, M.UpdateBuffBar = NoteRecommendation, FormatRemain, ColorText, UpdateBuffBar
+M.CLASS_OPTIONS = {} -- [key] = AceConfig group, added to the options window (class modules hide them per class)
+
 local function UpdateDisplay()
     if M.tgCombatHeld then M.TearGasHeldPoll() end
     UpdateBuffBar()
     UpdateButtonCooldownVisuals()
+    if not M.IsMage() then -- other classes: their module's Update (Holy / no module: buff bar only)
+        if KR:IsShown() then M.ClassCall("Update", GetTime()) end
+        return
+    end
     if not KR:IsShown() then return end
     local now = GetTime()
     M.stealHint, M.stealPrep = nil, false -- set again by M.SpellstealReco in the rotation below
@@ -4464,11 +4544,19 @@ function KR:PLAYER_DEAD()
     RefreshAnalyzerWindow()
 end
 
+-- Commands that only make sense for a Mage (the help lists them only for Mages).
+M.MAGE_COMMANDS = { comb = true, skips = true, utility = true, icelead = true, icecancel = true, buffet = true,
+    teargas = true, ["tränengas"] = true, traenengas = true, instability = true, gloves = true, fm = true, t9 = true,
+    molten = true, trank = true, potion = true, rota = true, rotation = true, burn = true, raub = true, steal = true,
+    zauberraub = true, spellsteal = true }
+
 -- /ch and /magehelper, registered through AceConsole in MH:OnInitialize.
 local function HandleSlash(msg)
     msg = msg or ""
     local cmd, arg = msg:match("^(%S*)%s*(.-)$")
     cmd = string.lower(cmd or "")
+    if M.ClassCall("Slash", cmd, arg) then return end -- class module commands (e.g. /ch rota for Paladins)
+    if not M.IsMage() and (M.MAGE_COMMANDS[cmd] or cmd:match("^tr..nengas$")) then print(L("ClassHelper: Nur für Magier.")); return end
     if cmd == "show" then cfg.shown = true; KR:Show()
     elseif cmd == "hide" then cfg.shown = false; KR:Hide()
     elseif cmd == "lock" then cfg.locked = true; print(L("ClassHelper: Bar gesperrt"))
@@ -4652,6 +4740,21 @@ local function HandleSlash(msg)
         else
             print(L("/ch lang auto|de|en - Sprache (auto = Client-Sprache)"))
         end
+    elseif (cmd == "help" or cmd == "") and not M.IsMage() then -- shared commands, then the class module's
+        print(L("ClassHelper Befehle:"))
+        print(L("/ch config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"))
+        print(L("/ch show|hide - Bar an/aus"))
+        print(L("/ch lock|unlock - Bar sperren/verschieben"))
+        print(L("/ch buffs show|hide|lock|unlock - zweite Buff-Bar"))
+        print(L("/ch debug on|off - Live-Debug: warum empfiehlt das Addon etwas"))
+        print(L("/ch analyse - Analysefenster öffnen (oder A-Icon unter der Minimap)"))
+        print(L("/ch analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"))
+        print(L("/ch report - letzten/aktuellen Fight-Report ausgeben"))
+        print(L("/ch autoreport on|off - Report nach Kampf an/aus"))
+        print(L("/ch lang auto|de|en - Sprache (auto = Client-Sprache)"))
+        print(L("/ch theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
+        print(L("/ch flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
+        M.ClassCall("SlashHelp")
     elseif cmd == "help" or cmd == "" then
         print(L("ClassHelper Befehle:"))
         print(L("/ch config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"))
@@ -4724,6 +4827,7 @@ local function SetupOptions(db)
     local function set(info, value) cfg[info[#info]] = value end
     local function toggle(name, order, setter) return { type = "toggle", name = name, order = order, width = "full", set = setter } end
     local function range(name, order, min, max, step) return { type = "range", name = name, order = order, min = min, max = max, step = step, width = "double" } end
+    local function notMage() return not M.IsMage() end -- Mage-only groups are hidden for other classes
     local function inCombat()
         if InCombatLockdown() then print(L("ClassHelper: Einstellungen sind im Kampf gesperrt.")); return true end
     end
@@ -4759,7 +4863,7 @@ local function SetupOptions(db)
                     end,
                     get = function() return (chr.flask == "any" or M.FLASKS[chr.flask]) and chr.flask or "auto" end,
                     set = function(_, v) SetFlaskChoice(v) end },
-                potion = { type = "select", name = L("Trank für Cooldowns und Buff-Leiste"), order = 8,
+                potion = { type = "select", name = L("Trank für Cooldowns und Buff-Leiste"), order = 8, hidden = notMage,
                     desc = L("Automatisch nach der aktiven Rota: Feuer Wilde Magie, Arkan und Frost Geschwindigkeit. Die Cooldown-Makros ändern sich nur außerhalb des Kampfes. Gilt pro Charakter."),
                     values = function()
                         local v = { auto = string.format(L("Automatisch (%s)"), M.PotionName(M.AutoPotion())), none = L("Kein Trank") }
@@ -4769,7 +4873,7 @@ local function SetupOptions(db)
                     get = function() return (chr.potion == "none" or M.POTIONS[chr.potion]) and chr.potion or "auto" end,
                     set = function(_, v) M.SetPotionChoice(v) end },
             } },
-            rotation = { type = "group", name = L("Rotation"), order = 2, get = get, set = set, args = {
+            rotation = { type = "group", name = L("Rotation"), order = 2, hidden = notMage, get = get, set = set, args = {
                 rotationMode = { type = "select", name = L("Rota-Modus"), order = 0,
                     desc = L("Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan, Feuer oder Frost). Die Buttons wechseln nur außerhalb des Kampfes."),
                     values = function()
@@ -4786,21 +4890,21 @@ local function SetupOptions(db)
                     cfg.useGloves = v; RebuildSpellMacros()
                 end),
             } },
-            arcane = { type = "group", name = L("Arkan"), order = 2.5, get = get, set = function(info, v) cfg[info[#info]] = v; M.ResetBurnState() end, args = {
+            arcane = { type = "group", name = L("Arkan"), order = 2.5, hidden = notMage, get = get, set = function(info, v) cfg[info[#info]] = v; M.ResetBurnState() end, args = {
                 help = { type = "description", order = 1, fontSize = "medium",
                     name = L("Burn: Arkanschlag auch mit 4 Stapeln. Sparen: Arkanschlag bis 3 Stapel, dann Arkane Geschosse. Während Arkane Macht, Heldentum/Kampfrausch oder dem T10-Spiegelbild-Buff wird immer geburnt.\n\nAutomatisch: Burn, solange dein Mana über der Schwelle liegt, und darunter weiter, wenn die Schätzung (Lebensverlust des Bosses gegen deinen gemessenen Manaverbrauch) sagt, dass dein Mana bis zu seinem Tod reicht. Nur nach Mana: nur die Schwelle.") },
                 arcaneBurnMode = { type = "select", name = L("Burn oder Sparen"), order = 2,
                     values = { auto = L("Automatisch (Zeit bis zum Tod gegen Mana)"), mana = L("Nur nach Mana") } },
                 arcaneBurnMana = range(L("Burn ab Mana (%)"), 3, 10, 90, 1),
             } },
-            spellsteal = { type = "group", name = L("Zauberraub"), order = 2.7, get = get,
+            spellsteal = { type = "group", name = L("Zauberraub"), order = 2.7, hidden = notMage, get = get,
                 set = function(info, v) cfg[info[#info]] = v; M.RescanSteal() end, args = {
                 help = { type = "description", order = 1, fontSize = "medium",
                     name = L("Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt aufs Ziel, mit Shift auf Mouseover. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels.") },
                 spellsteal = toggle(L("Zauberraub empfehlen"), 2),
                 spellstealAll = toggle(L("Auch nicht gelistete stehlbare Buffs empfehlen (nicht dringend)"), 3),
             } },
-            bosses = { type = "group", name = L("Boss-Mechaniken"), order = 3, get = get, set = set, args = {
+            bosses = { type = "group", name = L("Boss-Mechaniken"), order = 3, hidden = notMage, get = get, set = set, args = {
                 bossSkips = toggle(L("Eisblock bei Boss-Mechaniken (Stechende Seuche, Kochendes Blut, Schwärmende Schatten)"), 1),
                 iceBlockLead = range(L("Eisblock-Vorlauf vor Boss-Casts (Sekunden)"), 2, 0, 3, 0.1),
                 iceCancelHelper = toggle(L("Nach Eisblock Abbruch-Hinweis zeigen"), 3),
@@ -4811,7 +4915,7 @@ local function SetupOptions(db)
                 putricideInvisLead = range(L("Unsichtbarkeit so viele Prozent über 80 % / 35 % anfordern"), 8, 0.5, 5, 0.1),
                 putricideHelp = { type = "description", order = 9, name = L("Nur auf normal (10/25): Tränengas betäubt alle Spieler, bis Seuchenmord wieder angreift. Wer schon unsichtbar ist, wenn es landet, bleibt frei: Bei Seuchenmords Leben knapp über 80 % bzw. 35 % fordert der Unsichtbarkeit-Button rot auf, danach abbrechen und Seuchenmord allein schaden. Die Infozeile zählt bis zum Wiederangriff herunter; ist deine Bedrohung dann zu hoch, kommt Eisblock (oder Stop casten).") },
             } },
-            focusMagic = { type = "group", name = L("Fokusmagie"), order = 4, args = {
+            focusMagic = { type = "group", name = L("Fokusmagie"), order = 4, hidden = notMage, args = {
                 status = { type = "description", order = 1, fontSize = "medium", name = function()
                     local t, p = chr.focusMagicTarget or "", chr.focusMagicPartner or ""
                     return string.format(L("Ziel: %s   Partner: %s"), t ~= "" and t or "-", p ~= "" and p or "-")
@@ -4822,7 +4926,7 @@ local function SetupOptions(db)
                     get = function() return chr.focusMagicPartner end,
                     set = function(_, v) SetFocusMagicTarget(strtrim(v or ""), true) end },
             } },
-            molten = { type = "group", name = L("Glühende Rüstung"), order = 5, args = {
+            molten = { type = "group", name = L("Glühende Rüstung"), order = 5, hidden = notMage, args = {
                 moltenT9 = { type = "toggle", order = 1, width = "full",
                     name = L("Mit T9-Set-Bonus wirken (T9 anziehen, danach automatisch zurückwechseln)"),
                     get = function() return cfg.moltenT9 end,
@@ -4845,6 +4949,7 @@ local function SetupOptions(db)
         },
     }
     options.args.profiles.order = 10
+    for key, group in pairs(M.CLASS_OPTIONS) do options.args[key] = group end -- class modules
     LibStub("AceConfig-3.0"):RegisterOptionsTable(ADDON, options)
     optionsFrame = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(ADDON, "ClassHelper")
 end
@@ -4858,10 +4963,11 @@ end
 -- Called after the profile was switched, copied or reset: move and show/hide the frames.
 function MH:ApplyProfile()
     cfg = self.db.profile
+    M.cfg = cfg
     ApplyLanguageSetting()
     KR:ClearAllPoints()
     KR:SetPoint("CENTER", UIParent, "CENTER", cfg.x, cfg.y)
-    if cfg.shown then KR:Show() else KR:Hide() end
+    if M.BarWanted() then KR:Show() else KR:Hide() end
     if buffBar then
         buffBar:ClearAllPoints()
         buffBar:SetPoint("CENTER", UIParent, "CENTER", cfg.buffBarX, cfg.buffBarY)
@@ -4877,16 +4983,22 @@ function MH:ApplyProfile()
     RebuildSpellMacros()
     ApplyTheme()
     M.RescanSteal() -- the new profile may have Spellsteal on or off
+    M.ClassCall("ApplyProfile")
 end
 
 function MH:OnInitialize()
+    -- class detection (once per login; the class never changes in a session)
+    M.CLASS = select(2, UnitClass("player")) or "MAGE"
+    M.classMod = M.CLASS_MODULES[M.CLASS]
     local legacy = TakeLegacySettings()
     -- No default profile name: every character starts with its own profile ("Name - Realm");
     -- profiles can be shared or copied in the options window.
     self.db = LibStub("AceDB-3.0"):New("ClassHelperDB", defaults)
     ApplyLegacySettings(self.db, legacy)
     cfg, chr = self.db.profile, self.db.char
+    M.cfg, M.chr = cfg, chr -- for the class modules
     ApplyLanguageSetting()
+    M.ClassCall("Init")
     -- leftovers of the old leg-name swap (v3.0) and of the first T9 version (v3.1)
     chr.moltenStep, chr.moltenT9Legs, chr.moltenMainLegs, chr.moltenCastAt = nil, nil, nil, nil
     self.db.RegisterCallback(self, "OnProfileChanged", "ApplyProfile")
@@ -4911,8 +5023,12 @@ function MH:OnEnable()
     CreateAnalyzerMinimapButton()
     ApplyTheme()
     M.RescanSteal() -- a target kept through /reload
+    -- the class module gets every event too (as M.classMod[event](...)), plus the extra ones it lists in EVENTS
     for _, event in ipairs(EVENTS) do
-        self:RegisterEvent(event, function(e, ...) KR[e](KR, ...) end)
+        self:RegisterEvent(event, function(e, ...) KR[e](KR, ...); M.ClassCall(e, ...) end)
+    end
+    for _, event in ipairs(M.classMod and M.classMod.EVENTS or {}) do
+        if not KR[event] then self:RegisterEvent(event, function(e, ...) M.ClassCall(e, ...) end) end
     end
     -- After a fresh login the equipment may not be readable yet: tidy the T9 swap a bit later.
     self:ScheduleTimer(function()

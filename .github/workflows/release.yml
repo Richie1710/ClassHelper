@@ -41,7 +41,7 @@ jobs:
           name="ClassHelper-${GITHUB_REF_NAME}"
           mkdir -p dist/ClassHelper
           cp ClassHelper.toc ClassHelper.lua embeds.xml LICENSE README.md dist/ClassHelper/
-          cp -r Libs dist/ClassHelper/
+          cp -r Libs Classes dist/ClassHelper/
           (cd dist && zip -q -r -9 "${name}.zip" ClassHelper)
           unzip -l "dist/${name}.zip" | tail -1
           echo "ZIP=dist/${name}.zip" >> "$GITHUB_ENV"

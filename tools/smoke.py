@@ -1455,19 +1455,274 @@ Slash("rota auto")
 OUT[#OUT + 1] = "TEARGAS OK"
 """
 
+# ---------------------------------------------------------------------------------------------
+# Other classes: each runs in its own Lua state with its own login (the class is fixed at login).
+# ---------------------------------------------------------------------------------------------
+CLASSCOMMON = r'''
+M = ADDONTABLE.M
+function upd(n) for i = 1, (n or 3) do Tick(0.15) end end
+function shown(k) local b = FRAMES["ClassHelperButton_" .. k]; return b ~= nil and b.__shown end
+function buffShown(k) local b = FRAMES["ClassHelperBuff_" .. k]; return b ~= nil and b.__shown end
+function macro(k) return FRAMES["ClassHelperButton_" .. k].__attr.macrotext or "" end
+function S(id) return GetSpellInfo(id) end
+function isRed(b) local c = b.status.__vc; return c and c[1] > 0.9 and c[2] < 0.1 end
+function isGreen(b) local c = b.status.__vc; return c and c[2] > 0.9 and c[1] < 0.2 end
+function isYellow(b) local c = b.status.__vc; return c and c[1] > 0.9 and c[2] > 0.7 and c[3] < 0.1 end
+function isGrey(b) local c = b.status.__vc; return c and c[1] > 0.5 and c[1] < 0.6 and math.abs(c[1] - c[2]) < 0.01 end
+function opts() return LibStub("AceConfigRegistry-3.0"):GetOptionsTable("ClassHelper", "dialog", "MyLib-1.0") end
+MAGE_FRAMES = { "ClassHelperButton_lb", "ClassHelperButton_fireball", "ClassHelperButton_ab", "ClassHelperButton_fbolt",
+  "ClassHelperButton_steal", "ClassHelperButton_ice", "ClassHelperButton_invis", "ClassHelperButton_stop",
+  "ClassHelperBuff_armor", "ClassHelperBuff_brilliance", "ClassHelperBuff_fmin", "ClassHelperBuff_fmout",
+  "ClassHelperBuff_FMSet", "ClassHelperBuff_potion", "ClassHelperBuff_speed", "ClassHelperBuff_hero",
+  "ClassHelperStealIndicator", "ClassHelperFMPicker" }
+MAGE_GROUPS = { "rotation", "arcane", "spellsteal", "bosses", "focusMagic", "molten" }
+function checkNoMage(who)
+  for _, n in ipairs(MAGE_FRAMES) do check(FRAMES[n] == nil, who .. ": no mage frame " .. n) end
+  local o = opts()
+  check(type(o) == "table", who .. ": options table valid")
+  for _, g in ipairs(MAGE_GROUPS) do check(o.args[g].hidden() == true, who .. ": mage option group hidden: " .. g) end
+  check(o.args.general.args.potion.hidden() == true, who .. ": potion option hidden")
+  local before = #OUT
+  Slash("fm"); Slash("t9"); Slash("tränengas an"); Slash("raub an")
+  check(FRAMES.ClassHelperFMPicker == nil, who .. ": /ch fm opens nothing")
+  check(#OUT == before + 4 and OUT[#OUT]:find(GetLocale() == "deDE" and "Nur für Magier" or "Mage only", 1, true), who .. ": mage commands refused: " .. tostring(OUT[#OUT]))
+end
+'''
+
+PROT_SET = '{ "hor", "rd", "dprot", "loh", "dshield", "rf", "seal", "sealaoe", "hs", "judge", "hotr", "cons", "sor", "how", "avs", "plea" }'
+RET_SET = '{ "seal", "sealaoe", "aw", "judge", "cs", "dstorm", "cons", "how", "exo", "hwrath", "plea" }'
+
+# Paladin logged in with Protection talents: buttons, buff bar, options, recommendation hook,
+# spec switches (also in combat), Holy, judgement option, slash commands.
+PALADIN_LOGIN = r'''
+upd()
+check(M.CLASS == "PALADIN" and M.activeRota == "prot", "Prot paladin at login: " .. tostring(M.activeRota))
+checkNoMage("paladin")
+local o = opts()
+check(o.args.paladin.hidden() == false, "paladin option group shown")
+check(o.args.paladin.args.palUsePallyPower.disabled() == true, "PallyPower option greyed without PallyPower")
+check(MH.db.profile.palUsePallyPower == true and MH.db.profile.palJudgement == "wisdom", "paladin defaults")
+check(ClassHelperFrame.__shown, "rotation bar shown")
+for _, k in ipairs(''' + PROT_SET + r''') do check(shown(k), "Prot button shown: " .. k) end
+for _, k in ipairs({ "aw", "cs", "dstorm", "exo", "hwrath" }) do check(not shown(k), "Ret-only button hidden: " .. k) end
+-- fixed macros, names from GetSpellInfo
+check(macro("rd"):find("/cast [@targettarget,help,nodead] " .. S(31789), 1, true), "Righteous Defense on the boss's target: " .. macro("rd"))
+check(macro("loh"):find("[@player] " .. S(48788), 1, true), "Lay on Hands on myself")
+check(macro("seal"):find("/cast " .. S(31801), 1, true), "default seal (Alliance): Seal of Vengeance: " .. macro("seal"))
+check(macro("sealaoe"):find("/cast " .. S(20375), 1, true), "AoE seal: Seal of Command")
+check(macro("judge"):find("/cast " .. S(53408), 1, true), "default judgement: Wisdom")
+check(not macro("hs"):find("/use 10", 1, true), "no mage gloves line in paladin macros")
+-- buff bar: seal, aura, RF, Holy Shield, Divine Plea, flask, food, own default blessings Kings + Sanctuary
+for _, k in ipairs({ "pal_seal", "pal_aura", "pal_rf", "pal_hs", "pal_plea", "flask", "food", "pal_bless1", "pal_bless2" }) do check(buffShown(k), "Prot buff entry shown: " .. k) end
+check(not buffShown("pal_bless3") and not buffShown("pal_bless4"), "only two blessing slots in use")
+local B = function(k) return FRAMES["ClassHelperBuff_" .. k] end
+check(B("pal_seal").__attr.spell == S(31801) and B("pal_aura").__attr.spell == S(465), "seal/aura buttons cast Vengeance / Devotion")
+check(B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "RF wanted in Prot: button casts it")
+check(B("flask").flaskKey == "stoneblood", "Prot flask: Stoneblood")
+check(isRed(B("pal_seal")) and isRed(B("pal_rf")) and isRed(B("pal_bless1")), "nothing up: red")
+AURAS.player = { { S(31801), 0, 0, 31801 }, { S(25780), 0, 0, 25780 }, { S(25898), 0, GetTime() + 1800, 25898 },
+                 { S(48942), 0, 0, 48942 }, { S(48952), 0, GetTime() + 8, 48952 } }
+upd()
+check(isGreen(B("pal_seal")) and isGreen(B("pal_rf")) and isGreen(B("pal_aura")), "seal, RF, Devotion (max rank by name) green")
+check(isGreen(B("pal_bless1")) and isRed(B("pal_bless2")), "greater Kings counts, Sanctuary missing")
+check(isYellow(B("pal_hs")), "Holy Shield running out: yellow")
+check(tostring(B("pal_bless1").icon.__tex):find("spell20217", 1, true), "own default blessing shows the single icon")
+AURAS.player = { { S(21084), 0, 0, 21084 } }; upd()
+check(isYellow(B("pal_seal")) and B("pal_seal").timer.__text == "?", "another seal active: yellow '?'")
+FRAMES.ClassHelperBuff_pal_seal.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_seal)
+FRAMES.ClassHelperBuff_pal_bless1.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_bless1)
+FRAMES.ClassHelperBuff_pal_rf.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_rf)
+FRAMES.ClassHelperBuff_pal_hs.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_hs)
+-- empty recommendation: nothing glows, one-button idle
+for _, b in pairs(M.buttons) do check(b.state ~= "glow" and b.state ~= "urgent", "no glow without a rotation") end
+check(FRAMES.ClassHelperOneButton.currentKey == nil, "one-button idle")
+-- the rotation hook drives the glow (what the Prot agent fills in)
+local orig = M.PalProtReco
+local seen
+M.PalProtReco = function(St) seen = St; return "hs", true, "Test" end
+upd()
+check(M.buttons.hs.state == "urgent" and FRAMES.ClassHelperOneButton.currentKey == "hs", "PalProtReco key glows (urgent) and drives the one-button")
+check(seen and seen.rota == "prot" and seen.sealWantedId == 31801 and seen.judgementId == 53408 and seen.rfWanted == true, "state snapshot for the rotation")
+check(ClassHelperFrame.info.__text:find("Test", 1, true), "note in the info line: " .. ClassHelperFrame.info.__text)
+M.PalProtReco = orig; upd()
+-- judgement option (refused in combat), AoE mode
+Slash("richturteil licht"); check(macro("judge"):find(S(20271), 1, true), "Judgement of Light by option")
+INCOMBAT = true; o.args.paladin.args.palJudgement.set({ "paladin", "palJudgement" }, "wisdom")
+check(MH.db.profile.palJudgement == "light", "judgement option refused in combat")
+INCOMBAT = false; Slash("richturteil weisheit"); check(macro("judge"):find(S(53408), 1, true), "back to Wisdom")
+Slash("aoe an"); upd(); check(B("pal_seal").__attr.spell == S(20375), "AoE mode: the seal entry wants Command")
+check(macro("seal"):find(S(31801), 1, true), "the seal button keeps the single-target seal")
+Slash("aoe aus"); upd()
+-- spec switch to Ret
+AURAS.player = {}
+PLAYER_TALENTS = { 5, 11, 55 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
+check(M.activeRota == "ret", "talents: Ret")
+for _, k in ipairs(''' + RET_SET + r''') do check(shown(k), "Ret button shown: " .. k) end
+for _, k in ipairs({ "hor", "rd", "dprot", "loh", "dshield", "rf", "hs", "hotr", "sor", "avs" }) do check(not shown(k), "Prot-only button hidden: " .. k) end
+check(not buffShown("pal_hs") and not buffShown("pal_plea") and buffShown("pal_rf"), "Ret buff bar: no Holy Shield / Plea, RF warning entry")
+check(B("pal_aura").__attr.spell == S(7294) and B("flask").flaskKey == "endlessrage", "Ret: Retribution Aura, Endless Rage")
+check(isGrey(B("pal_rf")) and B("pal_rf").__attr.macrotext == "/cancelaura " .. S(25780), "RF not wanted: grey, click cancels")
+AURAS.player = { { S(25780), 0, nil, 25780 } }; upd()
+check(isRed(B("pal_rf")), "RF active in Ret: red warning")
+check(ClassHelperFrame.info.__text:find(GetLocale() == "deDE" and "nicht gewünscht" or "not wanted", 1, true), "RF warning in the info line")
+AURAS.player = {}
+local function blessIcon(i) return tostring(B("pal_bless" .. i).icon.__tex) end
+upd(5)
+check(blessIcon(1):find("spell20217", 1, true) and blessIcon(2):find("spell19740", 1, true), "Ret default blessings: Kings, Might")
+-- switch in combat waits for the end of combat
+INCOMBAT = true; PLAYER_TALENTS = { 5, 51, 15 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
+check(M.activeRota == "ret" and shown("cs"), "no button change in combat")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(M.activeRota == "prot" and shown("hs") and not shown("cs"), "switch applied after combat")
+-- Holy: buff bar only
+PLAYER_TALENTS = { 51, 5, 15 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
+check(M.activeRota == "holy" and not ClassHelperFrame.__shown, "Holy: rotation bar hidden")
+check(FRAMES.ClassHelperBuffBar.__shown and buffShown("pal_seal") and not buffShown("pal_hs"), "Holy: buff bar shown")
+check(B("pal_seal").__attr.spell == S(20166) and B("pal_aura").__attr.spell == S(19746), "Holy defaults: Seal of Wisdom, Concentration Aura")
+-- fixed mode by slash command and options
+Slash("rota vergeltung"); check(M.activeRota == "ret" and ClassHelperFrame.__shown and MH.db.profile.palRotationMode == "ret", "/ch rota ret")
+o.args.paladin.args.palRotationMode.set({ "paladin", "palRotationMode" }, "prot"); check(M.activeRota == "prot", "mode via options")
+check(type(o.args.paladin.args.palRotationMode.values().auto) == "string" and type(o.args.paladin.args.status.name()) == "string", "options texts")
+Slash("rota auto"); check(M.activeRota == "holy", "back to auto (Holy talents)")
+PLAYER_TALENTS = { 5, 51, 15 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
+check(M.activeRota == "prot" and ClassHelperFrame.__shown, "Prot again, bar back")
+for _, cmd in ipairs({ "help", "", "pal", "rota", "richturteil", "aoe", "report", "debug on", "debug off", "flask", "analyse start", "analyse stop" }) do Slash(cmd) end
+Slash("aoe aus")
+-- a short fight: nothing breaks, protected frames untouched in combat
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd(10)
+FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_CAST_SUCCESS", "GUID-player", "Kahuchan", 0x511, "GUID-target", "Dummy", 0xa48, 53595, S(53595), 1)
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", S(53595)); upd(5)
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "PALADIN_LOGIN OK"
+'''
+
+# PallyPower present (stubbed globals) -> seal, aura, RF and blessings taken over; option off or
+# PallyPower gone -> own defaults; its tables are never written.
+PALLYPOWER = r'''
+local B = function(k) return FRAMES["ClassHelperBuff_" .. k] end
+local function dump(t, seen)
+  if type(t) ~= "table" then return tostring(t) end
+  local keys = {}
+  for k in pairs(t) do keys[#keys + 1] = tostring(k) end
+  table.sort(keys)
+  local s = {}
+  for _, k in ipairs(keys) do s[#s + 1] = k .. "=" .. dump(t[k] ~= nil and t[k] or t[tonumber(k)]) end
+  return "{" .. table.concat(s, ",") .. "}"
+end
+PallyPower = { opt = { seal = 4, rf = false, sets = { primary = {}, secondary = {} } } }
+PallyPower_AuraAssignments = { Kahuchan = 3, Bpala = 1 }
+PallyPower_Assignments = { Kahuchan = { [5] = 3, [1] = 2 }, Bpala = { [5] = 2 }, Gone = { [5] = 1 } }
+PallyPower_NormalAssignments = { Bpala = { [5] = { Kahuchan = 4 } } }
+AllPallys = { Kahuchan = {}, Bpala = {} }
+local snapshot = dump({ PallyPower, PallyPower_AuraAssignments, PallyPower_Assignments, PallyPower_NormalAssignments })
+check(M.activeRota == "prot", "starts in Prot")
+upd(5)
+local o = opts()
+check(o.args.paladin.args.palUsePallyPower.disabled() == false, "PallyPower option enabled when loaded")
+check(macro("seal"):find("/cast " .. S(21084), 1, true), "seal from PallyPower (Righteousness): " .. macro("seal"))
+check(B("pal_seal").__attr.spell == S(21084) and B("pal_aura").__attr.spell == S(19746), "buff bar: PallyPower seal and aura (Concentration): " .. tostring(B("pal_seal").__attr.spell) .. " " .. tostring(B("pal_aura").__attr.spell) .. " shown=" .. tostring(FRAMES.ClassHelperBuffBar.__shown))
+check(B("pal_rf").__attr.macrotext == "/cancelaura " .. S(25780), "PallyPower rf=false: RF not wanted even in Prot")
+local function blessIcon(i) return tostring(B("pal_bless" .. i).icon.__tex) end
+check(buffShown("pal_bless1") and buffShown("pal_bless2") and not buffShown("pal_bless3"), "two blessings assigned to me (paladin 'Gone' skipped)")
+check(blessIcon(1):find("spell25898", 1, true), "my greater Kings: " .. blessIcon(1))
+check(blessIcon(2):find("spell20911", 1, true), "Bpala's single Sanctuary for me wins over its greater Might: " .. blessIcon(2))
+AURAS.player = { { S(20217), 0, 0, 20217 }, { S(25899), 0, 0, 25899 } }; upd()
+check(isGreen(B("pal_bless1")) and isGreen(B("pal_bless2")), "single Kings and greater Sanctuary both count")
+FRAMES.ClassHelperBuff_pal_bless2.__scripts.OnEnter(FRAMES.ClassHelperBuff_pal_bless2)
+check(OUT[#OUT]:find("Bpala", 1, true) or OUT[#OUT - 1]:find("Bpala", 1, true), "blessing tooltip names the paladin")
+PallyPower.opt.rf = true; upd(); check(B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "PallyPower rf=true: RF wanted")
+-- seal changes in combat apply after combat
+INCOMBAT = true; PallyPower.opt.seal = 6; upd()
+check(macro("seal"):find(S(21084), 1, true) and B("pal_seal").__attr.spell == S(21084), "no secure change in combat")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(macro("seal"):find(S(31801), 1, true) and B("pal_seal").__attr.spell == S(31801), "seal change applied after combat")
+PallyPower.opt.seal = 0; upd(); check(macro("seal"):find(S(31801), 1, true), "PallyPower seal 0: own default")
+PallyPower.opt.seal = 4; upd()
+local before = #OUT
+Slash("pal")
+check(table.concat(OUT, "\n", before + 1):find(S(21084), 1, true), "/ch pal shows the PallyPower seal")
+-- option off: own defaults
+Slash("pallypower aus"); upd(5)
+check(MH.db.profile.palUsePallyPower == false, "option off")
+check(macro("seal"):find(S(31801), 1, true) and B("pal_aura").__attr.spell == S(465) and B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "option off: own defaults")
+check(blessIcon(1):find("spell20217", 1, true) and blessIcon(2):find("spell20911", 1, true), "option off: own blessings Kings/Sanctuary")
+Slash("pallypower an"); upd(5)
+check(macro("seal"):find(S(21084), 1, true), "option on again")
+-- Horde default seal (PallyPower without a seal)
+FACTION = "Horde"; PallyPower.opt.seal = 0; upd(); check(macro("seal"):find(S(53736), 1, true), "Horde default: Seal of Corruption")
+FACTION = nil; PallyPower.opt.seal = 4; upd()
+PallyPower.opt.rf = false -- the test's own change back
+check(dump({ PallyPower, PallyPower_AuraAssignments, PallyPower_Assignments, PallyPower_NormalAssignments }) == snapshot, "PallyPower tables unchanged")
+-- PallyPower gone (not loaded): own defaults, option greyed
+PallyPower, PallyPower_AuraAssignments, PallyPower_Assignments, PallyPower_NormalAssignments, AllPallys = nil, nil, nil, nil, nil
+upd(5)
+check(o.args.paladin.args.palUsePallyPower.disabled() == true, "option greyed again")
+check(macro("seal"):find(S(31801), 1, true) and B("pal_aura").__attr.spell == S(465) and B("pal_rf").__attr.macrotext == "/cast " .. S(25780), "without PallyPower: own defaults")
+check(blessIcon(1):find("spell20217", 1, true) and blessIcon(2):find("spell20911", 1, true), "without PallyPower: own blessings")
+AURAS.player = {}
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "PALLYPOWER OK"
+'''
+
+# Paladin logged in with Retribution talents.
+RETLOGIN = r'''
+upd()
+check(M.CLASS == "PALADIN" and M.activeRota == "ret", "Ret paladin at login: " .. tostring(M.activeRota))
+checkNoMage("ret paladin")
+for _, k in ipairs(''' + RET_SET + r''') do check(shown(k), "Ret button shown at login: " .. k) end
+check(not shown("hor") and not shown("hs"), "Prot buttons hidden at login")
+check(FRAMES.ClassHelperBuff_pal_aura.__attr.spell == GetSpellInfo(7294), "Retribution Aura at login")
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "RETLOGIN OK"
+'''
+
+# A class without a module (Warrior): loads, shared parts only, nothing mage.
+OTHERCLASS = r'''
+upd()
+check(M.CLASS == "WARRIOR" and M.classMod == nil and M.activeRota == "none", "warrior: no class module")
+checkNoMage("warrior")
+check(not ClassHelperFrame.__shown, "no rotation bar")
+local o = opts()
+check(o.args.paladin.hidden() == true, "paladin options hidden")
+check(FRAMES.ClassHelperBuffBar.__shown and buffShown("flask") and buffShown("food"), "buff bar with flask and food")
+check(FRAMES.ClassHelperBuff_pal_seal == nil and FRAMES.ClassHelperButton_seal == nil, "no paladin frames")
+for _, cmd in ipairs({ "help", "", "rota", "report", "debug on", "debug off", "flask", "analyse start", "analyse stop", "show", "hide", "config" }) do Slash(cmd) end
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd(10); INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "OTHERCLASS OK"
+'''
+
+CLASS_RUNS = (
+    ("PALADIN", "{ 5, 51, 15 }", (("paladin_login", PALADIN_LOGIN), ("pallypower", PALLYPOWER))),
+    ("PALADIN", "{ 5, 11, 55 }", (("retlogin", RETLOGIN),)),
+    ("WARRIOR", "{ 5, 51, 15 }", (("otherclass", OTHERCLASS),)),
+)
+
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
 
 version, files = toc_files()
 failed = False
-for loc in ("deDE", "enUS"):
+PREFIXES = ("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS",
+            "PALADIN_LOGIN", "PALLYPOWER", "RETLOGIN", "OTHERCLASS", "|cffff7d0aClassHelper v")
+MAGE_PARTS = (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION), ("teargas", TEARGAS))
+
+
+def run(loc, label, parts, player_class=None, talents=None, common=""):
+    """One login in a fresh Lua state: load the files in TOC order, fire the login events, run the parts."""
+    global failed
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     g = lua.globals()
     g.LOCALE, g.ADDON_VERSION = loc, version
     lua.execute(STUB)
-    # SavedVariables as the client provides them before ADDON_LOADED
-    legacy = lua.execute(LEGACY)
-    if loc == "deDE": g.ClassHelperLegacyDB = legacy
-    else: g.ClassHelperDB = legacy  # variant: per-character file was not renamed
+    if player_class:
+        # the class is read once at login: set it (and the talents) before ADDON_LOADED
+        lua.execute(f'PLAYER_CLASS, PLAYER_TALENTS = "{player_class}", {talents}')
+    else:
+        # SavedVariables as the client provides them before ADDON_LOADED
+        legacy = lua.execute(LEGACY)
+        if loc == "deDE": g.ClassHelperLegacyDB = legacy
+        else: g.ClassHelperDB = legacy  # variant: per-character file was not renamed
     for f in files:
         g.LoadAddonFile(open(f, encoding="utf-8-sig").read(), os.path.relpath(f, ROOT), "ClassHelper")
     g.FireEvent("ADDON_LOADED", "ClassHelper")
@@ -1475,18 +1730,18 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION), ("teargas", TEARGAS)):
-            lua.execute(COMMON + part)
+        for name, part in parts:
+            lua.execute(COMMON + common + part)
     except Exception as e:
         failed = True
-        print(f"!!!!! {loc} scenario '{name}' failed: {e}")
+        print(f"!!!!! {loc} {label} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS", "|cffff7d0aClassHelper v")): print("  " + l)
+        if l.startswith(PREFIXES): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)
-    print(f"===== {loc}: {len(files)} files, {len(out)} output lines, {len(errors)} Lua errors, unknown globals: {sorted(g.MISSING.keys())}")
+    print(f"===== {loc} {label}: {len(files)} files, {len(out)} output lines, {len(errors)} Lua errors, unknown globals: {sorted(g.MISSING.keys())}")
     if loc == "enUS":
         bad = [l for l in out if GERMAN.search(l)]
         print("  German-looking lines in English output:", len(bad))
@@ -1495,6 +1750,12 @@ for loc in ("deDE", "enUS"):
         frames = g.FRAMES
         for k in sorted(k for k in frames.keys() if isinstance(k, str)):
             mt = frames[k]["__attr"]["macrotext"]
-            if mt: print("  MACRO", k, "->", mt.replace("\n", " | "))
+            if mt: print("  MACRO", k, "->", mt.replace(chr(10), " | "))
         for l in out: print("   ", l)
+
+
+for loc in ("deDE", "enUS"):
+    run(loc, "MAGE", MAGE_PARTS)
+    for cls, talents, parts in CLASS_RUNS:
+        run(loc, cls + " " + talents, parts, cls, talents, CLASSCOMMON)
 sys.exit(1 if failed else 0)
