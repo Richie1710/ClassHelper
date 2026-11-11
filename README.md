@@ -7,11 +7,12 @@ Fire Mage helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (Inter
 ## Features
 
 - **Rotation bar:** shows what to cast next – Living Bomb timing (never clip before the explosion), Hot Streak → Pyroblast, Combustion window, burst queue after Combustion (Mirror Image, potion, gloves), Fireballs per minute and cast-gap warnings. Includes a one-button that follows the recommendation.
-- **Buff bar:** red/green status for Molten Armor, Arcane Brilliance, Focus Magic in/out, flask, food, Wild Magic, Hyperspeed and Heroism.
+- **Buff bar:** red/green status for Molten Armor, Arcane Brilliance, Focus Magic in/out, flask, food, Wild Magic, Hyperspeed and Heroism. The expected flask is configurable per character; *automatic* picks the best one for your class and spec (Frost Wyrm, Endless Rage or Stoneblood).
 - **Molten Armor with the T9 2-piece bonus:** click 1 puts on T9 pieces from your bags (found by item ID, any T9 version) until two are worn, click 2 casts Molten Armor, then your previous gear goes back on automatically. The button color shows the step and whether the active armor has the bonus. Can be switched off in the settings.
 - **Focus Magic target picker:** scrollable group list with the filters *only mages* and *only healers without Focus Magic* (healer specs are detected by inspecting talents – handy for Valithria). Save a fixed partner, pick a temporary target, switch back with one click.
 - **ICC helpers:** Ice Block for boss mechanics (Pungent Blight, Boiling Blood, Swarming Shadows), Sindragosa stack warnings, Putricide Malleable Goo, Blood Queen essence, mandatory interrupts and Lich King threat.
 - **Analyzer:** boss fight and training-dummy runs with A/B comparison, fight report and death recap.
+- **Color themes:** Standard, Pink, Blue and Red for bars and windows. Signal colors (green, red, orange, blue) never change, and all themes keep readable contrast.
 - **Settings window and profiles** (Ace3): `/mh config` or *Interface → AddOns → MageHelper*. Every character starts with its own profile; profiles can be shared or copied.
 
 ## Installation
@@ -34,6 +35,8 @@ Ace3 is embedded – no other addons are required.
 | `/mh config` | Open the settings window |
 | `/mh fm` | Open the Focus Magic target picker |
 | `/mh t9` | Show T9 pieces found and the Molten Armor status |
+| `/mh theme standard\|pink\|blue\|red` | Color theme |
+| `/mh flask auto\|frost\|rage\|stone\|mojo\|resi\|any` | Which flask the buff bar expects |
 | `/mh lang auto\|de\|en` | Display language (default: client language) |
 | `/mh analyse` | Open the analyzer window |
 | `/mh debug on` | Live line explaining why something is recommended |
@@ -76,6 +79,8 @@ Helfer für Feuermagier in **WotLK 3.3.5a**, für deutsche und englische Clients
 - **Rota-Leiste** mit Empfehlung für den nächsten Zauber
 - **Buff-Leiste**
 - **Glühende Rüstung mit T9-Bonus:** T9 automatisch an- und danach wieder ausziehen
+- **Farbschemata** Standard, Rosa, Blau und Rot (`/mh theme`); die Signalfarben bleiben immer gleich
+- **Flask pro Charakter einstellbar** (`/mh flask`), automatisch passend zu Klasse und Skillung
 - **MF-Ziel-Auswahl** mit den Filtern „nur Mages“ und „nur Heiler ohne MF“
 - **ICC-Hinweise**
 - **Analyzer**

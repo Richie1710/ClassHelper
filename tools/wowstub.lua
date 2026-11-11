@@ -15,6 +15,7 @@ local SPELLS = {
   [43002]={"Arkane Brillanz","Arcane Brilliance"}, [54646]={"Fokusmagie","Focus Magic"},
   [69195]={"Stechende Seuche","Pungent Blight"}, [32182]={"Heldentum","Heroism"},
   [57399]={"Gut gen\195\164hrt","Well Fed"}, [54758]={"Hypergeschwindigkeitsbeschleunigung","Hyperspeed Acceleration"},
+  [48263]={"Frostpr\195\164senz","Frost Presence"}, [9634]={"Terrorb\195\164rengestalt","Dire Bear Form"}, [5487]={"B\195\164rengestalt","Bear Form"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -89,7 +90,7 @@ ChatFrame1 = DEFAULT_CHAT_FRAME
 -- RAID[1] should be the player ("Kahuchan"). Empty = solo.
 RAID = {}
 local function raidEntry(u)
-  if u == "player" then return { name = "Kahuchan", class = "MAGE" } end
+  if u == "player" then return { name = "Kahuchan", class = PLAYER_CLASS or "MAGE" } end
   local i = type(u) == "string" and tonumber(u:match("^raid(%d+)$"))
   if i then return RAID[i] end
 end
@@ -136,7 +137,7 @@ function CheckInteractDistance(u) local e = raidEntry(u); return e ~= nil and e.
 function NotifyInspect(u) INSPECTED = raidEntry(u); INSPECT_PENDING = true; INSPECT_COUNT = INSPECT_COUNT + 1 end
 function GetActiveTalentGroup() return 1 end
 function GetTalentTabInfo(tab, inspect)
-  local t = inspect and INSPECTED and INSPECTED.talents or { 0, 0, 0 }
+  local t = (inspect and INSPECTED and INSPECTED.talents) or (not inspect and PLAYER_TALENTS) or { 0, 0, 0 }
   return "Tab" .. tab, "icon", t[tab] or 0
 end
 
@@ -160,6 +161,15 @@ function EquipItemByName(item, slot)
       end
     end
   end
+end
+
+-- shapeshift form (death knight presence, druid form): PLAYER_FORM = spell ID of the active form
+function GetShapeshiftForm() return PLAYER_FORM and 1 or 0 end
+function GetShapeshiftFormInfo(i) if i == 1 and PLAYER_FORM then return "icon", GetSpellInfo(PLAYER_FORM), true, true end end
+function GetItemCount(id)
+  local n = 0
+  for _, items in pairs(BAGS) do for i = 1, 16 do if items[i] and itemId(items[i]) == id then n = n + 1 end end end
+  return n
 end
 
 -- FrameXML helpers used by the picker
@@ -204,7 +214,9 @@ function FRAME_Disable(self) self.__enabled = false end
 function FRAME_IsShown(self) return self.__shown end
 function FRAME_SetText(self, t) self.__text = t end
 function FRAME_GetText(self) return self.__text end
-function FRAME_SetTexture(self, t) self.__tex = t end
+function FRAME_SetTexture(self, t, g, b, a) self.__tex = t; if g then self.__rgba = { t, g, b, a } end end
+function FRAME_SetVertexColor(self, r, g, b, a) self.__vc = { r, g, b, a } end
+function FRAME_SetTextColor(self, r, g, b, a) self.__tc = { r, g, b, a } end
 function FRAME_GetTexture(self) return self.__tex end
 function FRAME_SetAttribute(self, k, v) self.__attr[k] = v end
 function FRAME_GetAttribute(self, k) return self.__attr[k] end

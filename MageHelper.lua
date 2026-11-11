@@ -1,4 +1,4 @@
--- MageHelper v3.1 Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
+-- MageHelper v3.2 color themes, flask choice; Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
 -- WotLK 3.3.5 Fire Mage helper: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
 local ADDON = "MageHelper"
@@ -8,6 +8,9 @@ local KR = CreateFrame("Frame", "MageHelperFrame", UIParent)
 -- Settings (AceDB, set in MH:OnInitialize): cfg = active profile, shareable between characters;
 -- chr = data that belongs to this character only (FM partner/target, T9 swap, analyzer runs).
 local cfg, chr
+-- Constants and state of the newer features (T9 swap, flask choice, themes). Grouped in one table
+-- because Lua 5.1 allows at most 200 local variables in a file's main chunk.
+local M = {}
 
 local defaults = {
     profile = {
@@ -30,6 +33,7 @@ local defaults = {
         fmFilterMages = false,
         fmFilterHealers = false,
         language = "auto",
+        theme = "standard",       -- color theme of the panels (signal colors never change)
         moltenT9 = true,          -- cast Molten Armor with the T9 2-piece bonus (swap T9 on and back)
         bossSkips = true,
         iceBlockLead = 1.0,
@@ -45,7 +49,9 @@ local defaults = {
     char = {
         focusMagicTarget = "",   -- current Focus Magic target (used by the FM OUT button)
         focusMagicPartner = "",  -- saved mage buddy; "back to partner" restores it (migrated on login)
-        moltenSwap = {},         -- [inventory slot] = item link (or false) taken off for the T9 swap
+        flask = "auto",          -- flask the buff bar expects: "auto", "any" or a key of FLASKS
+        moltenSwap = {},         -- [inventory slot] = { orig = link|false, t9 = link, at = time() } of a T9 swap
+        moltenRestorePending = false, -- Molten Armor was cast in combat: put the original gear back after combat
         analyzer = {
             trainingA = nil,
             trainingB = nil,
@@ -237,8 +243,27 @@ local L_EN = {
     ["/mh report - letzten/aktuellen Fight-Report ausgeben"] = "/mh report - print the last/current fight report",
     ["/mh autoreport on|off - Report nach Kampf an/aus"] = "/mh autoreport on|off - report after combat on/off",
     ["/mh lang auto|de|en - Sprache (auto = Client-Sprache)"] = "/mh lang auto|de|en - language (auto = client language)",
-    ["Glühende Rüstung aktiv, mit T9-Bonus."] = "Molten Armor active, with the T9 bonus.",
-    ["Glühende Rüstung aktiv, aber ohne T9-Bonus. Klick zieht T9 an, der nächste Klick erneuert die Rüstung."] = "Molten Armor active, but without the T9 bonus. Click puts T9 on, the next click renews the armor.",
+    ["Glühende Rüstung aktiv, gewirkt mit 2 T9-Teilen."] = "Molten Armor active, cast with 2 T9 pieces.",
+    ["Glühende Rüstung aktiv, aber ohne T9 gewirkt. Klick zieht T9 an, der nächste Klick erneuert die Rüstung."] = "Molten Armor active, but cast without T9. Click puts T9 on, the next click renews the armor.",
+    ["Glühende Rüstung aktiv."] = "Molten Armor active.",
+    ["T9 wird angelegt ..."] = "Equipping T9 ...",
+    ["..."] = "...",
+    ["MageHelper: %s ist nicht mehr in den Taschen, das T9-Teil bleibt angelegt."] = "MageHelper: %s is no longer in your bags, the T9 piece stays equipped.",
+    ["MageHelper: Ausrüstung konnte nicht vollständig zurückgewechselt werden, bitte von Hand prüfen."] = "MageHelper: could not swap all gear back, please check by hand.",
+    ["Jede Flask zählt"] = "Any flask counts",
+    ["Automatisch (%s)"] = "Automatic (%s)",
+    ["Flask für die Buff-Leiste"] = "Flask for the buff bar",
+    ["Automatisch: beste Flask für Klasse und Skillung, Steinblut für Todesritter in Frostpräsenz und Druiden in Bärengestalt. Gilt pro Charakter."] = "Automatic: best flask for class and spec, Stoneblood for death knights in Frost Presence and druids in Bear Form. Per character.",
+    ["MageHelper: Flask = %s"] = "MageHelper: flask = %s",
+    ["/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"] = "/mh flask auto|frost|rage|stone|mojo|resi|any - which flask the buff bar expects",
+    ["Farbschema"] = "Color theme",
+    ["Signalfarben (grün, rot, orange, blau) bleiben in jedem Schema gleich."] = "Signal colors (green, red, orange, blue) stay the same in every theme.",
+    ["Standard"] = "Standard",
+    ["Rosa"] = "Pink",
+    ["Blau"] = "Blue",
+    ["Rot"] = "Red",
+    ["MageHelper: Farbschema = %s"] = "MageHelper: color theme = %s",
+    ["/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"] = "/mh theme standard|pink|blue|red - color theme of bars and windows",
     ["T9 angelegt: Klick wirkt Glühende Rüstung, danach wechselt deine Ausrüstung zurück."] = "T9 equipped: click casts Molten Armor, then your gear is swapped back.",
     ["Klick 1 zieht T9-Teile aus den Taschen an, Klick 2 wirkt Glühende Rüstung."] = "Click 1 equips T9 pieces from your bags, click 2 casts Molten Armor.",
     ["Zu wenig T9-Teile für den Set-Bonus (%d von 2). Klick wirkt Glühende Rüstung ohne Bonus."] = "Not enough T9 pieces for the set bonus (%d of 2). Click casts Molten Armor without the bonus.",
@@ -360,7 +385,7 @@ local buffChecks = {
     { key="fmin", label="MF IN", iconSpell="Fokusmagie", iconSpellId=54646, names={"Fokusmagie", "Focus Magic"}, ids={[54646]=true}, required=true, special="focus_in" },
     -- MF OUT = klickbarer Button: Meine Fokusmagie auf Target/Mouseover/Focus bzw. gespeicherten Partner wirken.
     { key="fmout", label="MF OUT", iconSpell="Fokusmagie", iconSpellId=54646, names={"Fokusmagie", "Focus Magic"}, ids={[54646]=true}, cast=spells.focusMagic, required=true, special="focus_out" },
-    { key="flask", label="Flask", iconItemId=46376, names={"Fläschchen des Frostwyrms", "Flask of the Frost Wyrm"}, ids={[53755]=true}, required=true, statusOnly=true },
+    { key="flask", label="Flask", special="flask", iconItemId=46376, names={"Fläschchen des Frostwyrms", "Flask of the Frost Wyrm"}, ids={[53755]=true}, required=true, statusOnly=true },
     { key="food", label="Food", iconSpell="Gut genährt", iconSpellId=57399, names={"Gut genährt", "Well Fed", "Satt"}, ids={[57399]=true, [57367]=true, [57360]=true}, required=true, statusOnly=true },
     { key="wild", label="Wilde", iconItemId=40212, names={"Wilde Magie", "Wild Magic"}, ids={[53909]=true}, required=true, statusOnly=true },
     { key="speed", label="Speed", iconSpell="Hypergeschwindigkeitsbeschleunigung", iconSpellId=54758, names={"Hypergeschwindigkeitsbeschleunigung", "Hyperspeed Acceleration"}, ids={[54758]=true}, required=true, statusOnly=true },
@@ -860,6 +885,66 @@ local function ColorText(text, r,g,b)
     return string.format("|cff%02x%02x%02x%s|r", r*255, g*255, b*255, text)
 end
 
+-- =============================
+-- Color themes
+-- =============================
+-- Themes color only the panels: background, a thin accent stripe, titles, labels and the MF SET
+-- button. Signal colors (green active, red missing/urgent, orange act now, blue prepare, yellow,
+-- grey) never change. Contrast (WCAG, checked over a dark and a medium game world behind the
+-- translucent panels): titles/labels >= 7.7:1, every signal color >= 3.7:1, button text >= 4.6:1.
+M.THEMES = {
+    standard = { bg = { 0, 0, 0 }, accent = { 1.00, 0.82, 0.00 }, title = { 1.00, 0.82, 0.00 }, text = { 1.00, 0.82, 0.00 },
+                 button = { 0.08, 0.35, 0.95 }, buttonText = { 1.00, 0.82, 0.00 } },
+    pink = { bg = { 0.13, 0.03, 0.10 }, barAlpha = 0.55, stripe = true, accent = { 1.00, 0.42, 0.74 },
+             title = { 1.00, 0.62, 0.86 }, text = { 1.00, 0.84, 0.94 }, button = { 0.58, 0.10, 0.40 }, buttonText = { 1, 1, 1 } },
+    blue = { bg = { 0.02, 0.06, 0.16 }, barAlpha = 0.55, stripe = true, accent = { 0.30, 0.62, 1.00 },
+             title = { 0.55, 0.80, 1.00 }, text = { 0.84, 0.93, 1.00 }, button = { 0.07, 0.28, 0.70 }, buttonText = { 1, 1, 1 } },
+    -- wine-red accent, so the stripe is never mistaken for the signal red "missing"
+    red = { bg = { 0.14, 0.03, 0.03 }, barAlpha = 0.55, stripe = true, accent = { 0.80, 0.24, 0.38 },
+            title = { 1.00, 0.62, 0.52 }, text = { 1.00, 0.88, 0.82 }, button = { 0.52, 0.10, 0.22 }, buttonText = { 1, 1, 1 } },
+}
+M.THEME_ORDER = { "standard", "pink", "blue", "red" }
+M.THEME_NAMES = { standard = "Standard", pink = "Rosa", blue = "Blau", red = "Rot" }
+M.themed = { panels = {}, titles = {}, texts = {}, buttons = {} }
+
+local function Theme()
+    return M.THEMES[cfg and cfg.theme or "standard"] or M.THEMES.standard
+end
+
+-- Register a panel whose .bg texture takes the theme color. alpha = its usual background alpha;
+-- bars (isBar) are a bit more opaque in colored themes so labels keep their contrast.
+local function ThemePanel(frame, alpha, isBar)
+    local stripe = frame:CreateTexture(nil, "BORDER")
+    stripe:SetTexture("Interface\\Buttons\\WHITE8x8")
+    stripe:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    stripe:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    stripe:SetHeight(2)
+    frame.themeStripe = stripe
+    table.insert(M.themed.panels, { frame = frame, alpha = alpha, isBar = isBar })
+end
+local function ThemeTitle(fontString) table.insert(M.themed.titles, fontString) end
+local function ThemeText(fontString) table.insert(M.themed.texts, fontString) end
+local function ThemeButton(bgTexture, fontString) table.insert(M.themed.buttons, { bg = bgTexture, text = fontString }) end
+
+local function ApplyTheme()
+    local t = Theme()
+    for _, p in ipairs(M.themed.panels) do
+        p.frame.bg:SetTexture(t.bg[1], t.bg[2], t.bg[3], (p.isBar and t.barAlpha) or p.alpha)
+        if t.stripe then
+            p.frame.themeStripe:SetVertexColor(t.accent[1], t.accent[2], t.accent[3], 0.9)
+            p.frame.themeStripe:Show()
+        else
+            p.frame.themeStripe:Hide()
+        end
+    end
+    for _, fs in ipairs(M.themed.titles) do fs:SetTextColor(t.title[1], t.title[2], t.title[3]) end
+    for _, fs in ipairs(M.themed.texts) do fs:SetTextColor(t.text[1], t.text[2], t.text[3]) end
+    for _, b in ipairs(M.themed.buttons) do
+        b.bg:SetVertexColor(t.button[1], t.button[2], t.button[3], 0.75)
+        b.text:SetTextColor(t.buttonText[1], t.buttonText[2], t.buttonText[3])
+    end
+end
+
 local function ButtonSetState(btn, state, alpha)
     btn.state = state
     btn:SetAlpha(alpha or 0.45)
@@ -882,7 +967,7 @@ local function ButtonSetState(btn, state, alpha)
     else
         btn.overlay:Hide()
         if btn.glowBack then btn.glowBack:Hide() end
-        if btn.text then btn.text:SetTextColor(1, 0.82, 0, 1) end
+        if btn.text then local c = Theme().text; btn.text:SetTextColor(c[1], c[2], c[3], 1) end
     end
 end
 
@@ -1030,13 +1115,109 @@ end
 
 
 -- =============================
+-- Flask choice (per character)
+-- =============================
+-- Which flask the buff bar expects. "auto" picks the best flask for the class and active talent
+-- tree, "any" accepts every flask below. Matched by buff spell ID, so it works in any language.
+M.FLASKS = {
+    frostwyrm = { buff = 53755, item = 46376 },   -- Flask of the Frost Wyrm: +125 spell power
+    endlessrage = { buff = 53760, item = 46377 }, -- Flask of Endless Rage: +180 attack power
+    stoneblood = { buff = 53758, item = 46379 },  -- Flask of Stoneblood: +1300 health
+    puremojo = { buff = 54212, item = 46378 },    -- Flask of Pure Mojo: +45 mana per 5 sec
+    resistance = { buff = 62380, item = 44939 },  -- Lesser Flask of Resistance: +50 all resistances
+}
+M.FLASK_ORDER = { "frostwyrm", "endlessrage", "stoneblood", "puremojo", "resistance" }
+-- Best flask per class and talent tree (tree order as in the talent frame). Druid and death knight
+-- tanks share their trees with damage specs; they are recognised by form instead (InTankForm).
+M.FLASK_BY_SPEC = {
+    MAGE = { "frostwyrm", "frostwyrm", "frostwyrm" },
+    WARLOCK = { "frostwyrm", "frostwyrm", "frostwyrm" },
+    PRIEST = { "frostwyrm", "frostwyrm", "frostwyrm" },       -- Discipline, Holy, Shadow
+    DRUID = { "frostwyrm", "endlessrage", "frostwyrm" },      -- Balance, Feral, Restoration
+    SHAMAN = { "frostwyrm", "endlessrage", "frostwyrm" },     -- Elemental, Enhancement, Restoration
+    PALADIN = { "frostwyrm", "stoneblood", "endlessrage" },   -- Holy, Protection, Retribution
+    WARRIOR = { "endlessrage", "endlessrage", "stoneblood" }, -- Arms, Fury, Protection
+    DEATHKNIGHT = { "endlessrage", "endlessrage", "endlessrage" },
+    HUNTER = { "endlessrage", "endlessrage", "endlessrage" },
+    ROGUE = { "endlessrage", "endlessrage", "endlessrage" },
+}
+M.FLASK_ALIASES = { auto = "auto", any = "any", jede = "any", frost = "frostwyrm", frostwyrm = "frostwyrm",
+    rage = "endlessrage", wut = "endlessrage", endlessrage = "endlessrage", stone = "stoneblood", stein = "stoneblood",
+    stoneblood = "stoneblood", mojo = "puremojo", puremojo = "puremojo", resi = "resistance", resistance = "resistance" }
+
+-- Frost Presence (death knight tank), Bear Form, Dire Bear Form: matched by spell name from the ID.
+M.TANK_FORM_SPELLS = { 48263, 5487, 9634 }
+local function InTankForm()
+    local form = GetShapeshiftForm and GetShapeshiftForm() or 0
+    if form == 0 then return false end
+    local _, name = GetShapeshiftFormInfo(form)
+    for _, id in ipairs(M.TANK_FORM_SPELLS) do
+        if name and name == GetSpellInfo(id) then return true end
+    end
+    return false
+end
+
+M.autoFlaskCache, M.autoFlaskAt = nil, -10
+local function AutoFlask()
+    local now = GetTime()
+    if M.autoFlaskCache and now - M.autoFlaskAt < 5 then return M.autoFlaskCache end
+    local _, class = UnitClass("player")
+    local group = GetActiveTalentGroup and GetActiveTalentGroup(false, false) or nil
+    local tree, most = 1, -1
+    for tab = 1, 3 do
+        local _, _, points = GetTalentTabInfo(tab, false, false, group)
+        if (points or 0) > most then tree, most = tab, points or 0 end
+    end
+    local bySpec = M.FLASK_BY_SPEC[class or ""]
+    local flask = bySpec and bySpec[tree] or "frostwyrm"
+    if InTankForm() then flask = "stoneblood" end
+    M.autoFlaskCache, M.autoFlaskAt = flask, now
+    return M.autoFlaskCache
+end
+
+-- Flask keys the buff bar accepts right now.
+local function ExpectedFlasks()
+    local choice = chr and chr.flask or "auto"
+    if choice == "any" then return M.FLASK_ORDER end
+    if M.FLASKS[choice] then return { choice } end
+    return { AutoFlask() }
+end
+
+local function FlaskName(key)
+    return GetSpellInfo(M.FLASKS[key].buff) or key
+end
+
+local function FlaskActive()
+    local ids, names = {}, {}
+    for _, key in ipairs(ExpectedFlasks()) do
+        ids[M.FLASKS[key].buff] = true
+        table.insert(names, FlaskName(key))
+    end
+    return HasBuff("player", names, ids)
+end
+
+local function FlaskChoiceText()
+    local choice = chr and chr.flask or "auto"
+    if choice == "any" then return L("Jede Flask zählt") end
+    if M.FLASKS[choice] then return FlaskName(choice) end
+    return string.format(L("Automatisch (%s)"), FlaskName(AutoFlask()))
+end
+
+local function SetFlaskChoice(choice)
+    chr.flask = choice
+    M.autoFlaskCache = nil
+end
+
+-- =============================
 -- Molten Armor with the T9 2-piece bonus
 -- =============================
--- The T9 2-piece bonus raises Molten Armor's crit and stays in the buff after swapping back.
--- Click 1 equips T9 pieces from the bags until 2 are worn, click 2 casts Molten Armor, and after a
--- successful cast the previous items go back on. T9 is found by item ID only (any language).
+-- The T9 2-piece bonus raises Molten Armor's crit. Whether the stronger buff survives swapping the
+-- T9 back off is up to the server core (retail 3.3.5: yes; some private cores fixed it), so the
+-- button only claims "cast with 2 T9 pieces". Click 1 equips T9 pieces from the bags until 2 are
+-- worn, click 2 casts Molten Armor, and after a successful cast the previous items go back on.
+-- T9 is found by item ID only (any language).
 -- Mage T9 IDs 47748-47777 -> inventory slot (1 head, 3 shoulder, 5 chest, 7 legs, 10 hands).
-local T9_SLOT_BY_ID = {
+M.T9_SLOT_BY_ID = {
     [47748] = 1, [47749] = 5, [47750] = 7, [47751] = 3, [47752] = 10, -- Khadgar's ... of Conquest (232)
     [47753] = 10, [47754] = 1, [47755] = 7, [47756] = 5, [47757] = 3, -- Khadgar's ... of Triumph (245)
     [47758] = 3, [47759] = 5, [47760] = 7, [47761] = 1, [47762] = 10, -- Khadgar's ... of Triumph (258)
@@ -1044,11 +1225,15 @@ local T9_SLOT_BY_ID = {
     [47768] = 3, [47769] = 5, [47770] = 7, [47771] = 1, [47772] = 10, -- Sunstrider's ... of Triumph (245)
     [47773] = 10, [47774] = 1, [47775] = 7, [47776] = 5, [47777] = 3, -- Sunstrider's ... of Conquest (232)
 }
-local T9_SLOT_ORDER = { 7, 10, 3, 1, 5 } -- which slots to swap first: legs, hands, shoulders, head, chest
-local MOLTEN_BUFF_NAMES = { "Glühende Rüstung", "Molten Armor" }
-local MOLTEN_BUFF_IDS = { [43046] = true, [43045] = true, [30482] = true }
-local MOLTEN_DURATION = 1800
-local moltenRestorePending = false
+M.T9_SLOT_ORDER = { 7, 10, 3, 1, 5 } -- which slots to swap first: legs, hands, shoulders, head, chest
+M.MOLTEN_BUFF_NAMES = { "Glühende Rüstung", "Molten Armor" }
+M.MOLTEN_BUFF_IDS = { [43046] = true, [43045] = true, [30482] = true }
+M.SWAP_MAX_AGE = 600       -- seconds a swap stays valid; an aborted click 1 is forgotten after that
+M.SWAP_SETTLE = 1.5        -- seconds after click 1 in which further clicks do nothing (server equips)
+M.swapPendingUntil = 0
+M.restoreTries = 0
+M.lastMoltenCast = -10         -- GetTime() of the last successful Molten Armor cast
+M.moltenStateCache, M.moltenStateAt = nil, 0
 
 local function ItemIdFromLink(link)
     return link and tonumber(link:match("item:(%d+)"))
@@ -1056,9 +1241,9 @@ end
 
 local function EquippedT9()
     local count, worn = 0, {}
-    for _, slot in ipairs(T9_SLOT_ORDER) do
+    for _, slot in ipairs(M.T9_SLOT_ORDER) do
         local id = ItemIdFromLink(GetInventoryItemLink("player", slot))
-        if id and T9_SLOT_BY_ID[id] then count = count + 1; worn[slot] = true end
+        if id and M.T9_SLOT_BY_ID[id] then count = count + 1; worn[slot] = true end
     end
     return count, worn
 end
@@ -1069,7 +1254,7 @@ local function BagT9()
     for bag = 0, 4 do
         for i = 1, GetContainerNumSlots(bag) or 0 do
             local link = GetContainerItemLink(bag, i)
-            local slot = T9_SLOT_BY_ID[ItemIdFromLink(link) or 0]
+            local slot = M.T9_SLOT_BY_ID[ItemIdFromLink(link) or 0]
             if slot and not found[slot] then found[slot] = link end
         end
     end
@@ -1082,7 +1267,7 @@ local function MoltenPlan()
     local count, worn = EquippedT9()
     if count >= 2 then return "cast", count end
     local bag, picks = BagT9(), {}
-    for _, slot in ipairs(T9_SLOT_ORDER) do
+    for _, slot in ipairs(M.T9_SLOT_ORDER) do
         if count + #picks < 2 and bag[slot] and not worn[slot] then
             table.insert(picks, { slot = slot, link = bag[slot] })
         end
@@ -1091,57 +1276,130 @@ local function MoltenPlan()
     return "equip", count, picks
 end
 
+local function IsT9InSlot(slot)
+    local id = ItemIdFromLink(GetInventoryItemLink("player", slot))
+    return id ~= nil and M.T9_SLOT_BY_ID[id] ~= nil
+end
+
+-- Forget swap entries that are too old, in an old format, or whose T9 piece is no longer worn
+-- (the player swapped back by hand): they must never put old gear back on later. keepOld: a
+-- restore is pending because the cast happened in combat; then the age does not count (long fights).
+local function CleanSwap(keepOld)
+    for slot, e in pairs(chr.moltenSwap) do
+        local tooOld = type(e) == "table" and not keepOld and time() - (e.at or 0) > M.SWAP_MAX_AGE
+        if type(e) ~= "table" or tooOld or not IsT9InSlot(slot) then
+            chr.moltenSwap[slot] = nil
+        end
+    end
+end
+
+-- A swap from a recent click 1 that has not been cast yet.
+local function HasFreshSwap()
+    for _, e in pairs(chr.moltenSwap) do
+        if type(e) == "table" and time() - (e.at or 0) <= M.SWAP_MAX_AGE then return true end
+    end
+    return false
+end
+
+local function CancelVerify()
+    if M.verifyTimer then MH:CancelTimer(M.verifyTimer, true); M.verifyTimer = nil end
+end
+
 local function EquipT9ForMolten(picks)
+    CancelVerify() -- a restore check from an earlier cast must not undo this new swap
     for _, p in ipairs(picks) do
-        -- remember the original item only once, even if the swap is repeated
-        if chr.moltenSwap[p.slot] == nil then chr.moltenSwap[p.slot] = GetInventoryItemLink("player", p.slot) or false end
+        chr.moltenSwap[p.slot] = { orig = GetInventoryItemLink("player", p.slot) or false, t9 = p.link, at = time() }
         EquipItemByName(p.link, p.slot)
     end
+    M.swapPendingUntil = GetTime() + M.SWAP_SETTLE
+    M.moltenStateCache = nil
 end
 
--- Put the items taken off for the swap back on (armor can't be changed in combat: wait for it to end).
-local function RestoreAfterMolten()
-    if not next(chr.moltenSwap) then return end
-    if InCombatLockdown() then moltenRestorePending = true; return end
-    for slot, link in pairs(chr.moltenSwap) do
-        if link then EquipItemByName(link, slot) end
+-- Put the items taken off for the swap back on. Armor can't be changed in combat: then it waits
+-- for PLAYER_REGEN_ENABLED (saved, so it also survives a reload). One second later VerifyRestore
+-- checks the slots; 3 attempts in total.
+local VerifyRestore
+local function RestoreAfterMolten(isRetry)
+    if not isRetry then CleanSwap(chr.moltenRestorePending); M.restoreTries = 0 end
+    if not next(chr.moltenSwap) then chr.moltenRestorePending = false; return end
+    if InCombatLockdown() then chr.moltenRestorePending = true; return end
+    chr.moltenRestorePending = false
+    for slot, e in pairs(chr.moltenSwap) do
+        if not e.orig then
+            chr.moltenSwap[slot] = nil -- the slot was empty before: leave the T9 piece on
+        elseif GetItemCount(ItemIdFromLink(e.orig) or 0) == 0 then
+            print(string.format(L("MageHelper: %s ist nicht mehr in den Taschen, das T9-Teil bleibt angelegt."), e.orig))
+            chr.moltenSwap[slot] = nil
+        else
+            EquipItemByName(e.orig, slot)
+        end
     end
-    wipe(chr.moltenSwap)
-    moltenRestorePending = false
+    M.moltenStateCache = nil
+    CancelVerify()
+    if next(chr.moltenSwap) then M.verifyTimer = MH:ScheduleTimer(VerifyRestore, 1) end
 end
 
--- State of the Molten Armor button: "bonus", "nobonus" (buff up with/without T9 bonus), "ready" (T9 on,
--- click casts), "equip" (click puts T9 on), "missing" (fewer than 2 T9), "off" (option off, buff missing).
-local moltenStateCache, moltenStateAt = nil, 0
+VerifyRestore = function()
+    M.verifyTimer = nil
+    for slot, e in pairs(chr.moltenSwap) do
+        if ItemIdFromLink(GetInventoryItemLink("player", slot)) == ItemIdFromLink(e.orig) then chr.moltenSwap[slot] = nil end
+    end
+    M.moltenStateCache = nil
+    if not next(chr.moltenSwap) then return end
+    M.restoreTries = M.restoreTries + 1
+    if M.restoreTries < 3 then
+        RestoreAfterMolten(true)
+    else
+        print(L("MageHelper: Ausrüstung konnte nicht vollständig zurückgewechselt werden, bitte von Hand prüfen."))
+        wipe(chr.moltenSwap)
+    end
+end
+
+-- State of the Molten Armor button:
+--   buff up:      "bonus" / "nobonus" (cast with / without 2 T9 pieces), "ok" (swap option off),
+--                 "ready" (click 1 for a rebuff done: T9 worn, click casts)
+--   buff missing: "ready", "equip" (click puts T9 on), "missing" (fewer than 2 T9), "off" (option off)
+--   "wait":       click 1 just happened, the server is still equipping
 local function MoltenState()
     local now = GetTime()
-    if moltenStateCache and now - moltenStateAt < 0.5 then return unpack(moltenStateCache) end
+    if M.moltenStateCache and now - M.moltenStateAt < 0.5 then return unpack(M.moltenStateCache) end
     local state, extra
-    local active, remain = HasBuff("player", MOLTEN_BUFF_NAMES, MOLTEN_BUFF_IDS)
-    if active then
-        local fresh = chr.moltenCastAt and (time() - chr.moltenCastAt) <= MOLTEN_DURATION + 60
-        state = (chr.moltenBonus and fresh) and "bonus" or "nobonus"
-        extra = remain
+    local active, remain = HasBuff("player", M.MOLTEN_BUFF_NAMES, M.MOLTEN_BUFF_IDS)
+    -- buff gone (expired, dispelled, death): forget the bonus. Not right after a cast, the aura may
+    -- arrive a moment after UNIT_SPELLCAST_SUCCEEDED.
+    if not active and now - M.lastMoltenCast > 3 then chr.moltenBonus = false end
+    if now < M.swapPendingUntil then
+        state = "wait"
     elseif not cfg.moltenT9 then
-        state = "off"
+        state = active and "ok" or "off"
+        extra = remain
     else
         local plan, n = MoltenPlan()
-        state = (plan == "cast" and "ready") or plan
-        extra = n
+        local rebuffing = active and plan == "cast" and HasFreshSwap() and not chr.moltenRestorePending
+        if active and not rebuffing then
+            state = chr.moltenBonus and "bonus" or "nobonus"
+            extra = remain
+        else
+            state = (plan == "cast" and "ready") or plan
+            extra = n
+        end
     end
-    moltenStateCache, moltenStateAt = { state, extra }, now
-    return state, extra
+    M.moltenStateCache, M.moltenStateAt = { state, extra, active }, now
+    return state, extra, active
 end
 
-local MOLTEN_TIPS = {
-    bonus = "Glühende Rüstung aktiv, mit T9-Bonus.",
-    nobonus = "Glühende Rüstung aktiv, aber ohne T9-Bonus. Klick zieht T9 an, der nächste Klick erneuert die Rüstung.",
+M.MOLTEN_TIPS = {
+    bonus = "Glühende Rüstung aktiv, gewirkt mit 2 T9-Teilen.",
+    nobonus = "Glühende Rüstung aktiv, aber ohne T9 gewirkt. Klick zieht T9 an, der nächste Klick erneuert die Rüstung.",
+    ok = "Glühende Rüstung aktiv.",
     ready = "T9 angelegt: Klick wirkt Glühende Rüstung, danach wechselt deine Ausrüstung zurück.",
     equip = "Klick 1 zieht T9-Teile aus den Taschen an, Klick 2 wirkt Glühende Rüstung.",
     missing = "Zu wenig T9-Teile für den Set-Bonus (%d von 2). Klick wirkt Glühende Rüstung ohne Bonus.",
     off = "Klick wirkt Glühende Rüstung.",
+    wait = "T9 wird angelegt ...",
 }
-local MOLTEN_LABELS = { bonus = "Rüstung", nobonus = "Rüstung", ready = "Casten", equip = "T9 an", missing = "kein T9", off = "Rüstung" }
+M.MOLTEN_LABELS = { bonus = "Rüstung", nobonus = "Rüstung", ok = "Rüstung", ready = "Casten", equip = "T9 an",
+    missing = "kein T9", off = "Rüstung", wait = "..." }
 
 
 local function EscapeMacroName(name)
@@ -1247,6 +1505,7 @@ local function CreateBuffButton(parent, data)
     btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     btn.text:SetPoint("TOP", btn, "BOTTOM", 0, -1)
     btn.text:SetText(L(data.label))
+    ThemeText(btn.text)
     btn.timer = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     btn.timer:SetPoint("CENTER", btn, "CENTER", 0, 0)
     if data.cast then btn:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
@@ -1258,16 +1517,16 @@ local function CreateBuffButton(parent, data)
         btn:RegisterForClicks("LeftButtonUp")
         btn:SetScript("PreClick", function(self)
             if InCombatLockdown() or not cfg.moltenT9 then return end
+            if GetTime() < M.swapPendingUntil then self:SetAttribute("type", nil); return end
             local plan, _, picks = MoltenPlan()
             if plan == "equip" then
                 self:SetAttribute("type", nil)
                 EquipT9ForMolten(picks)
-                moltenStateCache = nil
             end
         end)
         btn:SetScript("PostClick", function(self)
             if not InCombatLockdown() then self:SetAttribute("type", "spell") end
-            moltenStateCache = nil
+            M.moltenStateCache = nil
         end)
     elseif data.special == "focus_out" then
         btn:SetAttribute("type", "macro")
@@ -1285,10 +1544,11 @@ local function CreateBuffButton(parent, data)
         GameTooltip:SetText(L(self.data.label))
         -- names lists are {German, English, ...}; show the buff name in the display language.
         local buffName = (self.data.iconSpellId and GetSpellInfo(self.data.iconSpellId)) or self.data.names[useEnglish and 2 or 1]
+        if self.data.special == "flask" then buffName = FlaskChoiceText() end
         GameTooltip:AddLine(buffName or "", 1,1,1, true)
         if self.data.special == "molten" then
             local state, extra = MoltenState()
-            GameTooltip:AddLine(string.format(L(MOLTEN_TIPS[state]), extra or 0), 0.7,0.9,1, true)
+            GameTooltip:AddLine(string.format(L(M.MOLTEN_TIPS[state]), extra or 0), 0.7,0.9,1, true)
         elseif self.data.special == "focus_out" then
             local target = chr.focusMagicTarget or ""
             if target ~= "" then GameTooltip:AddLine(string.format(L("Klick: Fokusmagie auf %s und danach zurück aufs letzte Ziel"), target), 0.7,0.9,1, true)
@@ -1483,7 +1743,9 @@ local function CreateFMPicker()
     f:SetScript("OnDragStart", function(self) self:StartMoving() end)
     f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     f.bg = f:CreateTexture(nil, "BACKGROUND"); f.bg:SetAllPoints(f); f.bg:SetTexture(0, 0, 0, 0.85)
+    ThemePanel(f, 0.85)
     f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    ThemeTitle(f.title)
     f.title:SetPoint("TOPLEFT", 12, -10)
     f.title:SetText(L("MF-Ziel auswählen"))
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
@@ -1583,6 +1845,7 @@ local function CreateFMPicker()
     f:Hide()
     tinsert(UISpecialFrames, "MageHelperFMPicker") -- Escape closes the window
     fmPicker = f
+    ApplyTheme()
 end
 
 local function ToggleFMPicker()
@@ -1605,7 +1868,9 @@ local function CreateBuffBar()
     buffBar.bg = buffBar:CreateTexture(nil, "BACKGROUND")
     buffBar.bg:SetAllPoints(buffBar)
     buffBar.bg:SetTexture(0,0,0,0.30)
+    ThemePanel(buffBar, 0.30, true)
     buffBar.title = buffBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    ThemeTitle(buffBar.title)
     buffBar.title:SetPoint("BOTTOMLEFT", buffBar, "TOPLEFT", 4, 2)
     buffBar.title:SetText("MageHelper Buffs")
     local x = 8
@@ -1626,6 +1891,7 @@ local function CreateBuffBar()
     buffBar.fmSetButton.text = buffBar.fmSetButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     buffBar.fmSetButton.text:SetPoint("CENTER")
     buffBar.fmSetButton.text:SetText(L("MF SET"))
+    ThemeButton(buffBar.fmSetButton.bg, buffBar.fmSetButton.text)
     buffBar.fmSetButton:SetScript("OnClick", ToggleFMPicker)
     buffBar.fmSetButton:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -1661,6 +1927,7 @@ local function CreateUI()
     KR.bg = KR:CreateTexture(nil, "BACKGROUND")
     KR.bg:SetAllPoints(KR)
     KR.bg:SetTexture(0,0,0,0.35)
+    ThemePanel(KR, 0.35, true)
 
     local order = {
         {"lb", "LB", spells.lb},
@@ -2053,11 +2320,13 @@ local function ToggleAnalyzerMenu(anchor)
         analyzerMenu = CreateFrame("Frame", "MageHelperAnalyzerMenu", UIParent)
         analyzerMenu:SetWidth(150); analyzerMenu:SetHeight(150)
         analyzerMenu.bg = analyzerMenu:CreateTexture(nil, "BACKGROUND"); analyzerMenu.bg:SetAllPoints(analyzerMenu); analyzerMenu.bg:SetTexture(0,0,0,0.85)
+        ThemePanel(analyzerMenu, 0.85)
         CreateAnalyzerButton(analyzerMenu, "Training Start", 8, -8, 132, AnalyzerStartTraining)
         CreateAnalyzerButton(analyzerMenu, "Training Stop", 8, -34, 132, AnalyzerStopTraining)
         CreateAnalyzerButton(analyzerMenu, L("Als A speichern"), 8, -60, 132, function() AnalyzerSaveSlot("A") end)
         CreateAnalyzerButton(analyzerMenu, L("Als B speichern"), 8, -86, 132, function() AnalyzerSaveSlot("B") end)
         CreateAnalyzerButton(analyzerMenu, L("A/B vergleichen"), 8, -112, 132, AnalyzerCompare)
+        ApplyTheme()
         analyzerMenu:Hide()
     end
     if analyzerMenu:IsShown() then analyzerMenu:Hide() else analyzerMenu:ClearAllPoints(); analyzerMenu:SetPoint("TOPRIGHT", anchor or UIParent, "BOTTOMLEFT", -4, 0); analyzerMenu:Show() end
@@ -2072,8 +2341,9 @@ local function CreateAnalyzerWindow()
     analyzerFrame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     analyzerFrame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     analyzerFrame.bg = analyzerFrame:CreateTexture(nil, "BACKGROUND"); analyzerFrame.bg:SetAllPoints(analyzerFrame); analyzerFrame.bg:SetTexture(0,0,0,0.78)
-    analyzerFrame.title = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); analyzerFrame.title:SetPoint("TOPLEFT", 12, -10); analyzerFrame.title:SetText(L("MageHelper Analyse"))
-    analyzerFrame.text = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); analyzerFrame.text:SetPoint("TOPLEFT", 12, -42); analyzerFrame.text:SetJustifyH("LEFT"); analyzerFrame.text:SetWidth(496); analyzerFrame.text:SetText("")
+    ThemePanel(analyzerFrame, 0.78)
+    analyzerFrame.title = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); analyzerFrame.title:SetPoint("TOPLEFT", 12, -10); analyzerFrame.title:SetText(L("MageHelper Analyse")); ThemeTitle(analyzerFrame.title)
+    analyzerFrame.text = analyzerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); analyzerFrame.text:SetPoint("TOPLEFT", 12, -42); analyzerFrame.text:SetJustifyH("LEFT"); analyzerFrame.text:SetWidth(496); analyzerFrame.text:SetText(""); ThemeText(analyzerFrame.text)
     CreateAnalyzerButton(analyzerFrame, "Start", 12, -178, 70, AnalyzerStartTraining)
     CreateAnalyzerButton(analyzerFrame, "Stop", 88, -178, 70, AnalyzerStopTraining)
     CreateAnalyzerButton(analyzerFrame, "A", 164, -178, 42, function() AnalyzerSaveSlot("A") end)
@@ -2171,15 +2441,19 @@ local function FormatRemain(remain)
     return string.format("%.0f", remain)
 end
 
--- Molten Armor button colors: r, g, b, pulse
-local MOLTEN_COLORS = {
-    bonus = { 0.10, 1.00, 0.10 },          -- green: buff with T9 bonus
-    nobonus = { 1.00, 0.85, 0.05 },        -- yellow: buff without bonus
+-- Molten Armor button colors: r, g, b, pulse. While the buff is missing the fill is always the
+-- signal red and only the border shows the T9 step.
+M.MOLTEN_COLORS = {
+    bonus = { 0.10, 1.00, 0.10 },          -- green: buff cast with 2 T9 pieces
+    ok = { 0.10, 1.00, 0.10 },             -- green: buff up, swap option off
+    nobonus = { 1.00, 0.85, 0.05 },        -- yellow: buff cast without T9
     ready = { 1.00, 0.50, 0.00, true },    -- orange, pulsing: T9 on, click casts
     equip = { 0.15, 0.55, 1.00 },          -- blue: click puts T9 on
+    wait = { 0.15, 0.55, 1.00, true },     -- blue, pulsing: T9 is being equipped
     missing = { 0.55, 0.55, 0.55 },        -- grey: fewer than 2 T9 pieces
     off = { 1.00, 0.05, 0.05 },            -- red: buff missing (swap option off)
 }
+M.MISSING_RED = { 1.00, 0.02, 0.02 }
 
 local function UpdateBuffBar()
     if not buffBar or not buffBar:IsShown() then return end
@@ -2187,6 +2461,14 @@ local function UpdateBuffBar()
         local btn = buffButtons[data.key]
         if btn then
             local active, remain, found = HasBuff("player", data.names, data.ids)
+            if data.special == "flask" then
+                active, remain, found = FlaskActive()
+                local key = ExpectedFlasks()[1]
+                if btn.flaskKey ~= key then
+                    btn.flaskKey = key
+                    btn.icon:SetTexture((GetItemIcon and GetItemIcon(M.FLASKS[key].item)) or "Interface\\Icons\\INV_Misc_QuestionMark")
+                end
+            end
             local warnSmall = false
             local displayName = found
             if data.special == "brilliance" and not active and data.smallNames then
@@ -2196,14 +2478,16 @@ local function UpdateBuffBar()
                 active, remain, displayName = FindMyFocusMagicOut()
             end
 
-            local moltenColor
+            local moltenColor, moltenFill
             if data.special == "molten" then
-                local state, extra = MoltenState()
-                btn.text:SetText(L(MOLTEN_LABELS[state]))
+                local state, extra, buffUp = MoltenState()
+                btn.text:SetText(L(M.MOLTEN_LABELS[state]))
                 if state == "missing" then btn.timer:SetText(string.format("%d/2", extra or 0))
-                elseif state == "bonus" or state == "nobonus" then btn.timer:SetText(FormatRemain(extra))
-                else btn.timer:SetText("") end
-                moltenColor = MOLTEN_COLORS[state]
+                elseif state == "bonus" or state == "nobonus" or state == "ok" then btn.timer:SetText(FormatRemain(extra))
+                elseif buffUp then btn.timer:SetText("")
+                else btn.timer:SetText("!") end
+                moltenColor = M.MOLTEN_COLORS[state]
+                moltenFill = (not buffUp) and M.MISSING_RED or nil
             else
                 btn.timer:SetText(active and (warnSmall and "AI" or FormatRemain(remain)) or "!")
             end
@@ -2212,8 +2496,12 @@ local function UpdateBuffBar()
                 local a = pulse and (0.25 + 0.25 * math.abs(math.sin(GetTime() * 5))) or 0.34
                 btn:SetAlpha(1)
                 btn.shade:SetVertexColor(0, 0, 0, 0.15)
-                btn.status:SetVertexColor(r, g, b, a)
-                btn.border:Show(); btn.border:SetVertexColor(r, g, b, 0.95)
+                if moltenFill then
+                    btn.status:SetVertexColor(moltenFill[1], moltenFill[2], moltenFill[3], 0.36)
+                else
+                    btn.status:SetVertexColor(r, g, b, a)
+                end
+                btn.border:Show(); btn.border:SetVertexColor(r, g, b, pulse and (0.55 + 0.4 * math.abs(math.sin(GetTime() * 5))) or 0.95)
             elseif active and not warnSmall then
                 btn:SetAlpha(1)
                 btn.shade:SetVertexColor(0,0,0,0.05)
@@ -2394,7 +2682,7 @@ end
 
 function KR:PLAYER_REGEN_ENABLED()
     RefreshOneButtonAfterCombat()
-    if moltenRestorePending then RestoreAfterMolten() end
+    if chr.moltenRestorePending then RestoreAfterMolten() end
     if fmPendingAfterCombat then
         RefreshFocusMagicButton()
         RefreshFocusMagicLabel()
@@ -2465,8 +2753,8 @@ function KR:UNIT_SPELLCAST_SUCCEEDED(unit, spell)
     elseif spell == spells.molten then
         -- the bonus is decided by what is worn when the cast lands; then swap back
         chr.moltenBonus = EquippedT9() >= 2
-        chr.moltenCastAt = time()
-        moltenStateCache = nil
+        M.lastMoltenCast = GetTime()
+        M.moltenStateCache = nil
         RestoreAfterMolten()
     end
 end
@@ -2600,7 +2888,22 @@ local function HandleSlash(msg)
         for _, link in pairs(BagT9()) do table.insert(links, link) end
         print(string.format(L("MageHelper T9: %d Teile angelegt, in den Taschen: %s"), count, #links > 0 and table.concat(links, " ") or L("keine")))
         local state, extra = MoltenState()
-        print(string.format(L(MOLTEN_TIPS[state]), extra or 0))
+        print(string.format(L(M.MOLTEN_TIPS[state]), extra or 0))
+    elseif cmd == "flask" then
+        local key = M.FLASK_ALIASES[string.lower(arg or "")]
+        if key then SetFlaskChoice(key) end
+        print(string.format(L("MageHelper: Flask = %s"), FlaskChoiceText()))
+        if not key then print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet")) end
+    elseif cmd == "theme" or cmd == "farbe" or cmd == "farbschema" then
+        local aliases = { standard = "standard", pink = "pink", rosa = "pink", blue = "blue", blau = "blue", red = "red", rot = "red" }
+        local key = aliases[string.lower(arg or "")]
+        if key then
+            cfg.theme = key
+            ApplyTheme()
+            print(string.format(L("MageHelper: Farbschema = %s"), L(M.THEME_NAMES[key])))
+        else
+            print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
+        end
     elseif cmd == "config" or cmd == "options" or cmd == "optionen" then
         MH:OpenOptions()
     elseif cmd == "lang" or cmd == "sprache" then
@@ -2638,6 +2941,8 @@ local function HandleSlash(msg)
         print(L("/mh autoreport on|off - Report nach Kampf an/aus"))
         print(L("/mh t9 - T9-Teile und Status für Glühende Rüstung anzeigen"))
         print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
+        print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
+        print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
     end
 end
 
@@ -2695,6 +3000,23 @@ local function SetupOptions(db)
                 language = { type = "select", name = L("Sprache"), desc = L("Buttons und Fenster wechseln nach /reload."), order = 5,
                     values = { auto = L("Automatisch (Client-Sprache)"), de = "Deutsch", en = "English" },
                     set = function(_, v) cfg.language = v; ApplyLanguageSetting() end },
+                theme = { type = "select", name = L("Farbschema"), order = 6,
+                    desc = L("Signalfarben (grün, rot, orange, blau) bleiben in jedem Schema gleich."),
+                    values = function()
+                        local v = {}
+                        for _, key in ipairs(M.THEME_ORDER) do v[key] = L(M.THEME_NAMES[key]) end
+                        return v
+                    end,
+                    set = function(_, v) cfg.theme = v; ApplyTheme() end },
+                flask = { type = "select", name = L("Flask für die Buff-Leiste"), order = 7,
+                    desc = L("Automatisch: beste Flask für Klasse und Skillung, Steinblut für Todesritter in Frostpräsenz und Druiden in Bärengestalt. Gilt pro Charakter."),
+                    values = function()
+                        local v = { auto = string.format(L("Automatisch (%s)"), FlaskName(AutoFlask())), any = L("Jede Flask zählt") }
+                        for _, key in ipairs(M.FLASK_ORDER) do v[key] = FlaskName(key) end
+                        return v
+                    end,
+                    get = function() return (chr.flask == "any" or M.FLASKS[chr.flask]) and chr.flask or "auto" end,
+                    set = function(_, v) SetFlaskChoice(v) end },
             } },
             rotation = { type = "group", name = L("Rotation"), order = 2, get = get, set = set, args = {
                 combustionLB = range(L("LB-Restzeit für Einäschern (Sekunden)"), 1, 0, 12, 1),
@@ -2727,10 +3049,10 @@ local function SetupOptions(db)
                 moltenT9 = { type = "toggle", order = 1, width = "full",
                     name = L("Mit T9-Set-Bonus wirken (T9 anziehen, danach automatisch zurückwechseln)"),
                     get = function() return cfg.moltenT9 end,
-                    set = function(_, v) cfg.moltenT9 = v; moltenStateCache = nil end },
+                    set = function(_, v) cfg.moltenT9 = v; M.moltenStateCache = nil end },
                 status = { type = "description", order = 2, fontSize = "medium", name = function()
                     local state, extra = MoltenState()
-                    return string.format(L(MOLTEN_TIPS[state]), extra or 0)
+                    return string.format(L(M.MOLTEN_TIPS[state]), extra or 0)
                 end },
             } },
             analyzer = { type = "group", name = L("Analyse"), order = 6, get = get, set = set, args = {
@@ -2774,6 +3096,7 @@ function MH:ApplyProfile()
     end
     if not cfg.debugMode and KR.debugInfo then KR.debugInfo:SetText("") end
     RebuildSpellMacros()
+    ApplyTheme()
 end
 
 function MH:OnInitialize()
@@ -2784,6 +3107,8 @@ function MH:OnInitialize()
     ApplyLegacySettings(self.db, legacy)
     cfg, chr = self.db.profile, self.db.char
     ApplyLanguageSetting()
+    -- leftovers of the old leg-name swap (v3.0) and of the first T9 version (v3.1)
+    chr.moltenStep, chr.moltenT9Legs, chr.moltenMainLegs, chr.moltenCastAt = nil, nil, nil, nil
     self.db.RegisterCallback(self, "OnProfileChanged", "ApplyProfile")
     self.db.RegisterCallback(self, "OnProfileCopied", "ApplyProfile")
     self.db.RegisterCallback(self, "OnProfileReset", "ApplyProfile")
@@ -2798,9 +3123,15 @@ function MH:OnEnable()
     CreateUI()
     CreateAnalyzerWindow()
     CreateAnalyzerMinimapButton()
+    ApplyTheme()
     for _, event in ipairs(EVENTS) do
         self:RegisterEvent(event, function(e, ...) KR[e](KR, ...) end)
     end
+    -- After a fresh login the equipment may not be readable yet: tidy the T9 swap a bit later.
+    self:ScheduleTimer(function()
+        CleanSwap(chr.moltenRestorePending)
+        if chr.moltenRestorePending then RestoreAfterMolten() end -- cast in combat before a reload
+    end, 5)
     KR:SetScript("OnUpdate", PulseRecommendationButtons) -- glow pulse every frame
     self:ScheduleRepeatingTimer(UpdateDisplay, 0.1)        -- recommendation + buff bar 10x per second
     print(string.format(L("|cffff7d0aMageHelper v%s|r geladen. /mh help"), GetAddOnMetadata(ADDON, "Version") or "?"))

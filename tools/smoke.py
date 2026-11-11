@@ -198,7 +198,7 @@ local function reset()
   INCOMBAT = false; AURAS.player = {}; CASTS = {}
   EQUIPPED = {}; for s, l in pairs(T10) do EQUIPPED[s] = l end
   BAGS = { [0] = { "|Hitem:47760|h[Khadgar's Leggings of Triumph]|h", "|Hitem:12345|h[Junk]|h", "|Hitem:47753|h[Khadgar's Gauntlets of Triumph]|h" } }
-  wipe(MH.db.char.moltenSwap); MH.db.char.moltenBonus = nil
+  wipe(MH.db.char.moltenSwap); MH.db.char.moltenBonus = nil; MH.db.char.moltenRestorePending = false
   Tick(0.6)
 end
 -- a secure click: PreClick, the action the attributes describe, PostClick
@@ -206,7 +206,7 @@ local function click()
   if B.__scripts.PreClick then B.__scripts.PreClick(B, "LeftButton") end
   if B.__attr.type == "spell" then CASTS[#CASTS + 1] = B.__attr.spell end
   if B.__scripts.PostClick then B.__scripts.PostClick(B, "LeftButton") end
-  Tick(0.6)
+  Tick(0.6); Tick(0.6); Tick(0.6)
 end
 local function state() return B.text.__text .. " " .. B.timer.__text end
 local function itemAt(slot) return tonumber((EQUIPPED[slot] or ""):match("item:(%d+)")) end
@@ -223,7 +223,8 @@ click()
 check(#CASTS == 1 and CASTS[1] == MOLTEN, "click 2 casts Molten Armor")
 FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN)
 check(EQUIPPED[7] == T10[7] and EQUIPPED[10] == T10[10], "exact original items back (heroic legs with enchant)")
-check(next(MH.db.char.moltenSwap) == nil and MH.db.char.moltenBonus == true, "swap cleared, bonus remembered")
+Tick(0.6); Tick(0.6) -- VerifyRestore checks the slots one second after the restore
+check(next(MH.db.char.moltenSwap) == nil and MH.db.char.moltenBonus == true, "swap cleared after verification, bonus remembered")
 AURAS.player = { { MOLTEN, 0, GetTime() + 1800, 43046 } }; Tick(0.6)
 check(B.text.__text == L_ARMOR, "green state with bonus: " .. state())
 OUT[#OUT + 1] = "T9 with bonus: " .. state()
@@ -249,9 +250,161 @@ check(#CASTS == 1, "not enough T9: plain cast")
 -- one T9 piece already worn: only one more is swapped in
 reset(); EQUIPPED[1] = "|Hitem:47761|h[Khadgar's Hood of Triumph]|h"; click()
 check(#CASTS == 0 and itemAt(7) == 47760 and itemAt(10) == 51280, "only the missing second piece is equipped")
-check(MH.db.char.moltenSwap[1] == nil and MH.db.char.moltenSwap[7] == T10[7], "worn T9 is not part of the swap")
+check(MH.db.char.moltenSwap[1] == nil and MH.db.char.moltenSwap[7].orig == T10[7], "worn T9 is not part of the swap")
+-- review fixes ---------------------------------------------------------------
+local function fill() return B.status.__vc end
+local function isRed(c) return c and c[1] > 0.9 and c[2] < 0.1 and c[3] < 0.1 end
+-- missing buff is red (fill) whatever the T9 step
+reset()
+check(isRed(fill()) and B.timer.__text == "!", "missing buff: red fill, '!' (" .. state() .. ")")
+check(B.border.__vc[3] > 0.9, "border shows the T9 step (blue)")
+
+-- fast double click: the second click inside the settle time does neither equip nor cast
+reset()
+B.__scripts.PreClick(B); if B.__attr.type == "spell" then CASTS[#CASTS + 1] = 1 end; B.__scripts.PostClick(B)
+local equips = EQUIP_COUNT
+B.__scripts.PreClick(B); if B.__attr.type == "spell" then CASTS[#CASTS + 1] = 1 end; B.__scripts.PostClick(B)
+check(#CASTS == 0 and EQUIP_COUNT == equips, "double click is ignored while the server equips")
+Tick(0.6); Tick(0.6); Tick(0.6)
+check(B.text.__text == L_T9_CAST, "after the settle time the button says cast")
+
+-- aborted click 1 + manual swap back + much later cast from the action bar: nothing old comes back
+reset(); click()
+EquipItemByName(T10[7], 7); EquipItemByName(T10[10], 10)                     -- player swaps back by hand
+BAGS[0][5] = "|Hitem:51999|h[New Legs]|h"; EquipItemByName("|Hitem:51999|h", 7) -- and upgrades the legs
+SetNow(GetTime() + 900); Tick(0.6)
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN)                       -- cast from the action bar, 15 min later
+Tick(0.6); Tick(0.6)
+check(itemAt(7) == 51999 and next(MH.db.char.moltenSwap) == nil, "stale swap forgotten, new legs stay on")
+
+-- click 1 while the buff is up (rebuff): the button must show the step
+reset(); AURAS.player = { { MOLTEN, 0, GetTime() + 600, 43046 } }; Tick(0.6)
+check(B.text.__text == L_ARMOR, "buff up without T9: armor label")
+click()
+check(B.text.__text == L_T9_CAST, "rebuff: after click 1 the button says cast (" .. state() .. ")")
+
+-- option off + buff up: plain green, no promise of a swap
+reset(); MH.db.profile.moltenT9 = false; AURAS.player = { { MOLTEN, 0, GetTime() + 600, 43046 } }; Tick(0.6)
+check(B.status.__vc[2] > 0.9 and B.status.__vc[1] < 0.2, "option off: active armor is green")
+MH.db.profile.moltenT9 = true
+
+-- cast in combat with T9 on: gear comes back after combat (flag saved for reloads)
+reset(); click(); INCOMBAT = true
+click()
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN)
+check(itemAt(7) == 47760 and MH.db.char.moltenRestorePending == true, "in combat the T9 stays on, restore pending (saved)")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); Tick(0.6); Tick(0.6)
+check(EQUIPPED[7] == T10[7] and EQUIPPED[10] == T10[10] and not MH.db.char.moltenRestorePending, "restored after combat")
+
+-- original item sold in the meantime: message, T9 stays, no endless retries
+reset(); click()
+for i = 1, 16 do if BAGS[0][i] == T10[7] then BAGS[0][i] = nil end end
+local before = #OUT
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN); Tick(0.6); Tick(0.6); Tick(0.6)
+check(itemAt(7) == 47760 and EQUIPPED[10] == T10[10], "sold legs: T9 legs stay, gloves come back")
+check(#OUT > before and next(MH.db.char.moltenSwap) == nil, "sold item reported, swap cleared")
+
+-- a restore the server ignores is retried and then reported
+reset(); click()
+local realEquip = EquipItemByName
+EquipItemByName = function() EQUIP_COUNT = (EQUIP_COUNT or 0) + 1 end -- server drops every request
+before = #OUT
+local tries = EQUIP_COUNT
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN)
+for i = 1, 10 do Tick(0.6) end
+EquipItemByName = realEquip
+check(EQUIP_COUNT - tries == 6 and #OUT > before and next(MH.db.char.moltenSwap) == nil, "failed restore tried 3x, then reported")
+
+-- click 1 before the pull, cast in combat, fight longer than 10 minutes: gear still comes back
+reset(); click(); INCOMBAT = true; click()
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN)
+SetNow(GetTime() + 900); Tick(0.6)
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); Tick(0.6); Tick(0.6)
+check(EQUIPPED[7] == T10[7] and EQUIPPED[10] == T10[10], "long fight: restored after combat")
+
+-- new click 1 right after a cast: the old restore check must not take the new T9 off again
+reset(); click(); click()
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", MOLTEN)               -- restore sent, check scheduled
+AURAS.player = { { MOLTEN, 0, GetTime() + 1800, 43046 } }
+B.__scripts.PreClick(B); B.__scripts.PostClick(B)                      -- immediate new click 1
+for i = 1, 5 do Tick(0.6) end
+check(itemAt(7) == 47760 and itemAt(10) == 47753, "new swap survives the old restore check")
+
 Slash("t9")
 OUT[#OUT + 1] = "T9 OK"
+'''
+
+# Color themes: panels, titles, labels and MF SET follow the theme; signal colors stay.
+THEMES = r'''
+local KR = MageHelperFrame
+local function rgb(t) return string.format("%.2f,%.2f,%.2f", t[1], t[2], t[3]) end
+check(MH.db.profile.theme == "standard" and rgb(KR.bg.__rgba) == "0.00,0.00,0.00" and KR.bg.__rgba[4] == 0.35, "standard look unchanged")
+check(not KR.themeStripe.__shown, "no stripe in standard")
+Slash("theme rosa")
+check(MH.db.profile.theme == "pink", "/mh theme rosa")
+check(rgb(KR.bg.__rgba) == "0.13,0.03,0.10" and KR.bg.__rgba[4] == 0.55, "bar background pink, more opaque")
+check(KR.themeStripe.__shown and rgb(KR.themeStripe.__vc) == "1.00,0.42,0.74", "pink accent stripe")
+check(rgb(FRAMES.MageHelperBuffBar.title.__tc) == "1.00,0.62,0.86", "buff bar title pink")
+check(rgb(FRAMES.MageHelperBuff_FMSet.bg.__vc) == "0.58,0.10,0.40", "MF SET button pink")
+check(rgb(FRAMES.MageHelperAnalyzerWindow.bg.__rgba) == "0.13,0.03,0.10" and FRAMES.MageHelperAnalyzerWindow.bg.__rgba[4] == 0.78, "analyzer window keeps its alpha")
+Tick(0.15)
+check(rgb(FRAMES.MageHelperButton_pyro.text.__tc) == "1.00,0.84,0.94", "button labels use theme text color")
+-- signal colors are independent of the theme
+local s = FRAMES.MageHelperBuff_flask.status.__vc
+Slash("theme red"); Tick(0.15)
+check(rgb(FRAMES.MageHelperBuff_flask.status.__vc) == rgb(s), "signal color unchanged by theme")
+check(rgb(KR.themeStripe.__vc) == "0.80,0.24,0.38", "red theme uses the wine accent")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+o.args.general.args.theme.set({ "general", "theme" }, "blue")
+check(rgb(KR.bg.__rgba) == "0.02,0.06,0.16", "theme via options")
+Slash("fm"); local P = FRAMES.MageHelperFMPicker
+check(rgb(P.bg.__rgba) == "0.02,0.06,0.16" and rgb(P.title.__tc) == "0.55,0.80,1.00", "picker created later gets the theme")
+P:Hide()
+MH.db:SetProfile("Themes"); check(rgb(KR.bg.__rgba) == "0.00,0.00,0.00", "profile switch applies its theme")
+Slash("theme bogus")
+OUT[#OUT + 1] = "THEMES OK"
+'''
+
+# Flask choice: auto by class/spec, fixed flask, any flask; matched by buff ID.
+FLASK = r'''
+local F = FRAMES.MageHelperBuff_flask
+local C = MH.db.char
+local function active() Tick(0.15); return F.timer.__text ~= "!" end
+local function useFlask(buffId) AURAS.player = { { GetSpellInfo(buffId) or "Flask", 0, GetTime() + 3600, buffId } } end
+check(C.flask == "auto", "default flask choice is auto")
+useFlask(53755)
+check(active(), "mage: Frost Wyrm counts in auto")
+useFlask(53760)
+check(not active(), "mage: Endless Rage does not count")
+Slash("flask rage")
+check(C.flask == "endlessrage" and active(), "fixed choice Endless Rage")
+Slash("flask any"); useFlask(62380)
+check(active(), "any flask counts (resistance)")
+Slash("flask auto")
+PLAYER_CLASS, PLAYER_TALENTS = "WARRIOR", { 0, 5, 56 }; Slash("flask auto")
+useFlask(53758)
+check(active(), "protection warrior: Stoneblood in auto")
+PLAYER_CLASS, PLAYER_TALENTS = "PALADIN", { 51, 5, 15 }; Slash("flask auto"); useFlask(53755)
+check(active(), "holy paladin: Frost Wyrm in auto")
+check(tostring(F.icon.__tex):find("item46376", 1, true), "icon follows the expected flask: " .. tostring(F.icon.__tex))
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+check(o.args.general.args.flask.values().stoneblood ~= nil, "options list the flasks")
+o.args.general.args.flask.set({ "general", "flask" }, "stoneblood")
+check(C.flask == "stoneblood", "flask via options")
+Slash("flask"); Slash("flask auto")
+-- tanks by form: death knight in Frost Presence, druid in Bear Form -> Stoneblood
+PLAYER_CLASS, PLAYER_TALENTS, PLAYER_FORM = "DEATHKNIGHT", { 0, 51, 20 }, 48263; Slash("flask auto"); useFlask(53758)
+check(active(), "death knight in Frost Presence: Stoneblood")
+PLAYER_FORM = nil; Slash("flask auto"); useFlask(53760)
+check(active(), "death knight without Frost Presence: Endless Rage")
+PLAYER_CLASS, PLAYER_TALENTS, PLAYER_FORM = "DRUID", { 0, 56, 15 }, 9634; Slash("flask auto"); useFlask(53758)
+check(active(), "druid in Dire Bear Form: Stoneblood")
+-- an invalid saved value falls back to auto in the options
+C.flask = "bogus"
+check(o.args.general.args.flask.get() == "auto", "invalid flask value shows as auto")
+C.flask = "auto"
+PLAYER_CLASS, PLAYER_TALENTS, PLAYER_FORM, AURAS.player = nil, nil, nil, {}
+OUT[#OUT + 1] = "FLASK OK"
 '''
 
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
@@ -274,14 +427,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("options", OPTIONS), ("picker", PICKER), ("t9", T9)):
+        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "OPTIONS", "T9", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "OPTIONS", "T9", "THEMES", "FLASK", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)
