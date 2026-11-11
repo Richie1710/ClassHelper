@@ -61,6 +61,10 @@ Parts of this addon's source code, its tests and this README were created or rev
 
 This notice is given voluntarily for transparency.
 
+## License
+
+MageHelper is released under the [MIT License](LICENSE) – you may use, change and share it as long as the copyright notice (Kahu/Shiro) and the license text stay included. The embedded Ace3 libraries keep their own license ([`Libs/Ace3-LICENSE.txt`](Libs/Ace3-LICENSE.txt)).
+
 ---
 
 ## Deutsch (Kurzfassung)
@@ -79,6 +83,8 @@ Helfer für Feuermagier in **WotLK 3.3.5a**, für deutsche und englische Clients
 2. Das Spiel komplett neu starten.
 
 Alle Befehle zeigt `/mh help`.
+
+**Lizenz:** MIT (siehe [LICENSE](LICENSE)). Nutzen, ändern und weitergeben ist erlaubt, solange der Copyright-Hinweis (Kahu/Shiro) und der Lizenztext erhalten bleiben.
 
 **KI-Hinweis:** Teile des Quellcodes, der Tests und dieser README wurden unter Anleitung des Maintainers mit Unterstützung generativer KI (eines KI-Programmierassistenten) erstellt oder überarbeitet. Das betrifft unter anderem:
 - die deutsch-englische Lokalisierung
