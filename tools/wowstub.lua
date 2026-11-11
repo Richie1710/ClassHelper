@@ -29,6 +29,9 @@ local SPELLS = {
   [31687]={"Wasserelementar beschw\195\182ren","Summon Water Elemental"}, [74396]={"Eisige Finger","Fingers of Frost"},
   [44544]={"Eisige Finger","Fingers of Frost"}, [57761]={"Feuerball!","Fireball!"}, [42917]={"Frostnova","Frost Nova"},
   [33395]={"Einfrieren","Freeze"},
+  -- Potion use spells (buffs, Runic Mana has none)
+  [53908]={"Geschwindigkeit","Speed"}, [53909]={"Wilde Magie","Wild Magic"},
+  [53762]={"Unzerst\195\182rbar","Indestructible"}, [43186]={"Mana wiederherstellen","Restore Mana"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)

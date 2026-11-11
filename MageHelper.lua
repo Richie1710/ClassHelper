@@ -1,4 +1,4 @@
--- MageHelper v3.4 Fire, Arcane and Frost rotations, Spellsteal helper; T9 swap, themes, flask choice, Ace3 settings; German + English client support
+-- MageHelper v3.5 Fire, Arcane and Frost rotations, Spellsteal helper; T9 swap, themes, flask and potion choice, Ace3 settings; German + English client support
 -- WotLK 3.3.5 Fire, Arcane and Frost Mage helper. Fire: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
 local ADDON = "MageHelper"
@@ -55,6 +55,7 @@ local defaults = {
         focusMagicTarget = "",   -- current Focus Magic target (used by the FM OUT button)
         focusMagicPartner = "",  -- saved mage buddy; "back to partner" restores it (migrated on login)
         flask = "auto",          -- flask the buff bar expects: "auto", "any" or a key of FLASKS
+        potion = "auto",         -- potion of the cooldown macros and the buff bar: "auto", "none" or a key of POTIONS
         moltenSwap = {},         -- [inventory slot] = { orig = link|false, t9 = link, at = time() } of a T9 swap
         moltenRestorePending = false, -- Molten Armor was cast in combat: put the original gear back after combat
         analyzer = {
@@ -95,7 +96,7 @@ local L_EN = {
     ["Im Kampf kann WoW den Klick-Spell nicht immer wechseln; dann den leuchtenden Einzelbutton nutzen."] = "In combat WoW cannot always switch the click spell; use the glowing single button instead.",
     ["MF IN"] = "FM IN",
     ["MF OUT"] = "FM OUT",
-    ["Wilde"] = "Wild",
+    ["Trank"] = "Potion",
     ["MF-Ziel: %s"] = "FM target: %s",
     ["MF-Ziel: kein Ziel gesetzt"] = "FM target: none set",
     ["MageHelper: Fokusmagie-Ziel gesetzt: %s"] = "MageHelper: Focus Magic target set: %s",
@@ -260,6 +261,14 @@ local L_EN = {
     ["Flask für die Buff-Leiste"] = "Flask for the buff bar",
     ["Automatisch: beste Flask für Klasse und Skillung, Steinblut für Todesritter in Frostpräsenz und Druiden in Bärengestalt. Gilt pro Charakter."] = "Automatic: best flask for class and spec, Stoneblood for death knights in Frost Presence and druids in Bear Form. Per character.",
     ["MageHelper: Flask = %s"] = "MageHelper: flask = %s",
+    ["MageHelper: Trank = %s"] = "MageHelper: potion = %s",
+    ["Kein Trank"] = "No potion",
+    ["Trank für Cooldowns und Buff-Leiste"] = "Potion for cooldowns and buff bar",
+    ["Automatisch nach der aktiven Rota: Feuer Wilde Magie, Arkan und Frost Geschwindigkeit. Die Cooldown-Makros ändern sich nur außerhalb des Kampfes. Gilt pro Charakter."] = "Automatic by the active rotation: Fire Wild Magic, Arcane and Frost Speed. The cooldown macros change only out of combat. Per character.",
+    ["/mh trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste"] = "/mh potion auto|speed|wild|mana|indestructible|none - potion for the cooldown macros and the buff bar",
+    ["MageHelper: Im Kampf - die Makros ändern sich nach dem Kampf."] = "MageHelper: In combat - the macros change after combat.",
+    ["Grau: kein Buff zu prüfen"] = "Grey: no buff to check",
+    ["Die Cooldown-Makros aller Rotas nutzen diesen Trank."] = "The cooldown macros of all rotations use this potion.",
     ["/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"] = "/mh flask auto|frost|rage|stone|mojo|resi|any - which flask the buff bar expects",
     ["Farbschema"] = "Color theme",
     ["Signalfarben (grün, rot, orange, blau) bleiben in jedem Schema gleich."] = "Signal colors (green, red, orange, blue) stay the same in every theme.",
@@ -509,7 +518,7 @@ local buffChecks = {
     { key="fmout", label="MF OUT", iconSpell="Fokusmagie", iconSpellId=54646, names={"Fokusmagie", "Focus Magic"}, ids={[54646]=true}, cast=spells.focusMagic, required=true, special="focus_out" },
     { key="flask", label="Flask", special="flask", iconItemId=46376, names={"Fläschchen des Frostwyrms", "Flask of the Frost Wyrm"}, ids={[53755]=true}, required=true, statusOnly=true },
     { key="food", label="Food", iconSpell="Gut genährt", iconSpellId=57399, names={"Gut genährt", "Well Fed", "Satt"}, ids={[57399]=true, [57367]=true, [57360]=true}, required=true, statusOnly=true },
-    { key="wild", label="Wilde", iconItemId=40212, names={"Wilde Magie", "Wild Magic"}, ids={[53909]=true}, required=true, statusOnly=true },
+    { key="potion", label="Trank", special="potion", iconItemId=40212, names={}, ids={}, required=true, statusOnly=true },
     { key="speed", label="Speed", iconSpell="Hypergeschwindigkeitsbeschleunigung", iconSpellId=54758, names={"Hypergeschwindigkeitsbeschleunigung", "Hyperspeed Acceleration"}, ids={[54758]=true}, required=true, statusOnly=true },
     { key="hero", label="Hero", iconSpell="Heldentum", iconSpellId=32182, names={"Heldentum", "Heroism", "Kampfrausch", "Bloodlust"}, ids={[32182]=true, [2825]=true}, required=true, statusOnly=true },
 }
@@ -731,7 +740,7 @@ end
 local function BurstCDReady()
     local mirrorReady, mirrorCD = SpellReady(spells.mirror)
     local glovesReady, glovesCD = ItemSlotReady(10)
-    -- Potions/Flame Cap cannot be reliably checked by name in all clients here,
+    -- Potions cannot be reliably checked by name in all clients here,
     -- so the Burst button remains useful whenever one tracked burst piece is ready.
     if mirrorReady or glovesReady then return true, math.min(mirrorCD or 999, glovesCD or 999) end
     return false, math.min(mirrorCD or 999, glovesCD or 999)
@@ -1348,6 +1357,80 @@ local function SetFlaskChoice(choice)
 end
 
 -- =============================
+-- Potion choice (per character)
+-- =============================
+-- Which potion the cooldown macros (Fire "cd", Arcane "ap", Frost "fcd") use and the buff bar
+-- expects. "auto" follows the active rotation, "none" leaves the potion out. IDs checked on
+-- Wowhead WotLK (item -> use spell). Runic Mana gives instant mana and no buff, so the buff bar
+-- shows it grey (nothing to check), like "none". Macros change only out of combat: the potion
+-- built into them is M.potionInMacro, and the buff bar follows that one, so both always agree.
+M.POTIONS = {
+    speed = { item = 40211, buff = 53908 },          -- Potion of Speed: +500 haste rating, 15 s
+    wildmagic = { item = 40212, buff = 53909 },      -- Potion of Wild Magic: +200 crit and spell power, 15 s
+    runicmana = { item = 33448, use = 43186 },       -- Runic Mana Potion: instant mana, no buff
+    indestructible = { item = 40093, buff = 53762 }, -- Indestructible Potion: +3500 armor, 2 min
+}
+M.POTION_ORDER = { "speed", "wildmagic", "runicmana", "indestructible" }
+M.POTION_BY_ROTA = { fire = "wildmagic", arcane = "speed", frost = "speed" }
+M.POTION_ALIASES = { auto = "auto", tempo = "speed", speed = "speed", wild = "wildmagic", wilde = "wildmagic",
+    wildmagic = "wildmagic", mana = "runicmana", runicmana = "runicmana", unzerstoerbar = "indestructible",
+    ["unzerstörbar"] = "indestructible", indestructible = "indestructible", aus = "none", none = "none", off = "none" }
+
+function M.AutoPotion()
+    return M.POTION_BY_ROTA[M.activeRota or (cfg and M.DesiredRota()) or "fire"] or "wildmagic"
+end
+
+-- Potion key of the current choice, nil for "none".
+function M.ChosenPotion()
+    local choice = chr and chr.potion or "auto"
+    if choice == "none" then return nil end
+    if M.POTIONS[choice] then return choice end
+    return M.AutoPotion()
+end
+
+-- Display name: cached item name, else the name of its use spell (both in the client language).
+function M.PotionName(key)
+    local p = M.POTIONS[key]
+    return GetItemInfo(p.item) or GetSpellInfo(p.buff or p.use) or key
+end
+
+function M.PotionChoiceText()
+    local choice = chr and chr.potion or "auto"
+    if choice == "none" then return L("Kein Trank") end
+    if M.POTIONS[choice] then return M.PotionName(choice) end
+    return string.format(L("Automatisch (%s)"), M.PotionName(M.AutoPotion()))
+end
+
+-- "/use" line of the chosen potion for the cooldown macros (empty for "none").
+function M.PotionMacroLines()
+    local key = M.ChosenPotion()
+    M.potionInMacro = key or "none"
+    if not key then return {} end
+    return { "/use " .. ItemName(M.POTIONS[key].item) }
+end
+
+-- Potion key the buff bar expects: the one in the macros, nil for none.
+function M.ExpectedPotion()
+    local key = M.potionInMacro or M.ChosenPotion() or "none"
+    if key == "none" then return nil end
+    return key
+end
+
+function M.SetPotionChoice(choice)
+    chr.potion = choice
+    RebuildSpellMacros() -- does nothing in combat; PLAYER_REGEN_ENABLED rebuilds the macros
+    if InCombatLockdown() then print(L("MageHelper: Im Kampf - die Makros ändern sich nach dem Kampf.")) end
+end
+
+-- Fire cooldown button: gloves, Mana Sapphire and the chosen potion with Mirror Image.
+function M.FireCdMacro()
+    local t = { "#showtooltip " .. spells.mirror, "/use 10", "/use " .. ItemName(33312) }
+    for _, line in ipairs(M.PotionMacroLines()) do t[#t + 1] = line end
+    t[#t + 1] = "/cast " .. spells.mirror
+    return table.concat(t, "\n")
+end
+
+-- =============================
 -- Molten Armor with the T9 2-piece bonus
 -- =============================
 -- The T9 2-piece bonus raises Molten Armor's crit. Whether the stronger buff survives swapping the
@@ -1684,6 +1767,7 @@ local function CreateBuffButton(parent, data)
         -- names lists are {German, English, ...}; show the buff name in the display language.
         local buffName = (self.data.iconSpellId and GetSpellInfo(self.data.iconSpellId)) or self.data.names[useEnglish and 2 or 1]
         if self.data.special == "flask" then buffName = FlaskChoiceText() end
+        if self.data.special == "potion" then buffName = M.PotionChoiceText() end
         GameTooltip:AddLine(buffName or "", 1,1,1, true)
         if self.data.special == "molten" then
             local state, extra = MoltenState()
@@ -1694,6 +1778,15 @@ local function CreateBuffButton(parent, data)
             else GameTooltip:AddLine(L("Klick: Fokusmagie auf Mouseover, Fokus oder Ziel. MF-Ziel auswählen über MF SET"), 0.7,0.9,1, true) end
         elseif self.data.special == "focus_in" then
             GameTooltip:AddLine(L("Status: Habe ich Fokusmagie von einem anderen Mage?"), 0.7,0.9,1, true)
+        elseif self.data.special == "potion" then
+            local key = M.ExpectedPotion()
+            if key ~= M.ChosenPotion() then GameTooltip:AddLine(L("(gilt ab Kampfende)"), 1,0.67,0, true) end
+            if key and M.POTIONS[key].buff then
+                GameTooltip:AddLine(L("Statusanzeige: rot fehlt, grün aktiv"), 0.7,0.9,1, true)
+            else
+                GameTooltip:AddLine(L("Grau: kein Buff zu prüfen"), 0.7,0.9,1, true)
+            end
+            GameTooltip:AddLine(L("Die Cooldown-Makros aller Rotas nutzen diesen Trank."), 0.7,0.9,1, true)
         elseif self.data.statusOnly then
             GameTooltip:AddLine(L("Statusanzeige: rot fehlt, grün aktiv"), 0.7,0.9,1, true)
         elseif self.data.cast then GameTooltip:AddLine(L("Klick: Buff wirken"), 0.7,0.9,1) end
@@ -2073,8 +2166,8 @@ local function CreateUI()
         {"pyro", "Pyro", spells.pyro},
         {"fireball", "FB", spells.fireball},
         {"comb", "Comb", spells.combustion},
-        -- Items by ID: 33312 Mana Sapphire, 40212 Potion of Wild Magic, 22788 Flame Cap.
-        {"cd", "CD", spells.mirror, table.concat({"#showtooltip " .. spells.mirror, "/use 10", "/use " .. ItemName(33312), "/use " .. ItemName(40212), "/use " .. ItemName(22788), "/cast " .. spells.mirror}, "\n")},
+        -- Mirror Image + gloves, Mana Sapphire (item 33312) and the chosen potion: M.FireCdMacro.
+        {"cd", "CD", spells.mirror, M.FireCdMacro()},
         {"fb_move", "Move", spells.fireblast},
         {"ice", "IB", spells.iceblock, "#showtooltip " .. spells.iceblock .. "\n/cancelaura " .. spells.iceblock .. "\n/cast " .. spells.iceblock},
         {"invis", "Invis", spells.invis, "#showtooltip " .. spells.invis .. "\n/cancelaura " .. spells.invis .. "\n/cast " .. spells.invis},
@@ -2086,6 +2179,7 @@ local function CreateUI()
         b:SetPoint("TOPLEFT", KR, "TOPLEFT", x, -8)
         x = x + 53
     end
+    buttons.cd.macroBuilder = M.FireCdMacro -- rebuilt when the potion choice or rotation changes
     -- Arcane set (Ice Block, Invisibility, Counterspell and the Fire Blast move button are shared).
     -- M.LayoutRota shows only the buttons of the active rotation.
     for _, data in ipairs({
@@ -2645,6 +2739,20 @@ local function UpdateBuffBar()
                     btn.icon:SetTexture((GetItemIcon and GetItemIcon(M.FLASKS[key].item)) or "Interface\\Icons\\INV_Misc_QuestionMark")
                 end
             end
+            local neutral = false -- grey: nothing to check (Runic Mana has no buff, or no potion chosen)
+            if data.special == "potion" then
+                local key = M.ExpectedPotion()
+                local p = key and M.POTIONS[key]
+                if btn.potionKey ~= (key or "none") then
+                    btn.potionKey = key or "none"
+                    btn.icon:SetTexture((p and GetItemIcon and GetItemIcon(p.item)) or "Interface\\Icons\\INV_Misc_QuestionMark")
+                end
+                if p and p.buff then
+                    active, remain, found = HasBuff("player", nil, { [p.buff] = true })
+                else
+                    active, remain, found, neutral = false, 0, nil, true
+                end
+            end
             local warnSmall = false
             local displayName = found
             if data.special == "brilliance" and not active and data.smallNames then
@@ -2667,7 +2775,13 @@ local function UpdateBuffBar()
             else
                 btn.timer:SetText(active and (warnSmall and "AI" or FormatRemain(remain)) or "!")
             end
-            if moltenColor then
+            if neutral then
+                btn.timer:SetText("")
+                btn:SetAlpha(0.6)
+                btn.shade:SetVertexColor(0, 0, 0, 0.50)
+                btn.status:SetVertexColor(0.55, 0.55, 0.55, 0.25)
+                btn.border:Show(); btn.border:SetVertexColor(0.55, 0.55, 0.55, 0.6)
+            elseif moltenColor then
                 local r, g, b, pulse = unpack(moltenColor)
                 local a = pulse and (0.25 + 0.25 * math.abs(math.sin(GetTime() * 5))) or 0.34
                 btn:SetAlpha(1)
@@ -2970,10 +3084,11 @@ function M.KnowsSpell(id)
     return name ~= nil and GetSpellInfo(name) ~= nil
 end
 
--- Arcane Power button: Icy Veins rides along in the same macro when known (both are off the GCD).
+-- Arcane Power button: Icy Veins rides along in the same macro when known, and the chosen potion
+-- (all off the GCD).
 function M.ArcanePowerMacro()
     local extra = M.KnowsSpell(M.SPELL_ID.iv) and { "/cast " .. spells.iv } or nil
-    return MakeMacro(spells.ap, nil, extra)
+    return MakeMacro(spells.ap, M.PotionMacroLines(), extra)
 end
 
 -- "fire", "arcane" or "frost": fixed by cfg.rotationMode, or by the talent tree with the most points
@@ -3540,8 +3655,8 @@ function M.TrinketCooldown()
     return ready, best
 end
 
--- Frost cooldown button: Icy Veins (if known) and the trinkets are off the GCD, so one click casts
--- them all together with Mirror Image. With the T10 4-piece Mirror Image goes first (+18% damage).
+-- Frost cooldown button: Icy Veins (if known), the trinkets and the chosen potion are off the GCD,
+-- so one click uses them all together with Mirror Image. With the T10 4-piece Mirror Image goes first (+18% damage).
 -- Only on-use trinkets get a /use line; UNIT_INVENTORY_CHANGED rebuilds the macro (out of combat).
 function M.FrostCdMacro()
     local iv = M.KnowsSpell(M.SPELL_ID.iv)
@@ -3553,6 +3668,7 @@ function M.FrostCdMacro()
     for _, slot in ipairs(M.TRINKET_SLOTS) do
         if M.OnUseTrinket(slot) then t[#t + 1] = "/use " .. slot end
     end
+    for _, line in ipairs(M.PotionMacroLines()) do t[#t + 1] = line end
     if not t10 then t[#t + 1] = "/cast " .. spells.mirror end
     return table.concat(t, "\n")
 end
@@ -3831,7 +3947,7 @@ end
 function KR:PLAYER_REGEN_ENABLED()
     RefreshOneButtonAfterCombat()
     if M.rotaPending then M.ApplyRotaMode() end
-    RebuildSpellMacros() -- Icy Veins learned/unlearned in combat: Arcane Power macro
+    RebuildSpellMacros() -- Icy Veins learned/unlearned or potion choice changed in combat
     if chr.moltenRestorePending then RestoreAfterMolten() end
     if fmPendingAfterCombat then
         RefreshFocusMagicButton()
@@ -4063,6 +4179,11 @@ local function HandleSlash(msg)
         if key then SetFlaskChoice(key) end
         print(string.format(L("MageHelper: Flask = %s"), FlaskChoiceText()))
         if not key then print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet")) end
+    elseif cmd == "trank" or cmd == "potion" then
+        local key = M.POTION_ALIASES[string.lower(arg or "")]
+        if key then M.SetPotionChoice(key) end
+        print(string.format(L("MageHelper: Trank = %s"), M.PotionChoiceText()))
+        if not key then print(L("/mh trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste")) end
     elseif cmd == "theme" or cmd == "farbe" or cmd == "farbschema" then
         local aliases = { standard = "standard", pink = "pink", rosa = "pink", blue = "blue", blau = "blue", red = "red", rot = "red" }
         local key = aliases[string.lower(arg or "")]
@@ -4140,6 +4261,7 @@ local function HandleSlash(msg)
         print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
         print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
         print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
+        print(L("/mh trank auto|tempo|wild|mana|unzerstoerbar|aus - Trank für die Cooldown-Makros und die Buff-Leiste"))
         print(L("/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"))
         print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"))
         print(L("/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"))
@@ -4217,6 +4339,15 @@ local function SetupOptions(db)
                     end,
                     get = function() return (chr.flask == "any" or M.FLASKS[chr.flask]) and chr.flask or "auto" end,
                     set = function(_, v) SetFlaskChoice(v) end },
+                potion = { type = "select", name = L("Trank für Cooldowns und Buff-Leiste"), order = 8,
+                    desc = L("Automatisch nach der aktiven Rota: Feuer Wilde Magie, Arkan und Frost Geschwindigkeit. Die Cooldown-Makros ändern sich nur außerhalb des Kampfes. Gilt pro Charakter."),
+                    values = function()
+                        local v = { auto = string.format(L("Automatisch (%s)"), M.PotionName(M.AutoPotion())), none = L("Kein Trank") }
+                        for _, key in ipairs(M.POTION_ORDER) do v[key] = M.PotionName(key) end
+                        return v
+                    end,
+                    get = function() return (chr.potion == "none" or M.POTIONS[chr.potion]) and chr.potion or "auto" end,
+                    set = function(_, v) M.SetPotionChoice(v) end },
             } },
             rotation = { type = "group", name = L("Rotation"), order = 2, get = get, set = set, args = {
                 rotationMode = { type = "select", name = L("Rota-Modus"), order = 0,

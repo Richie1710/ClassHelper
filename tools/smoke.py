@@ -76,7 +76,7 @@ for _, cmd in ipairs({"", "help", "lock", "unlock", "buffs lock", "comb 9", "ski
   Slash(cmd)
 end
 check(OPTIONS_OPENED ~= nil, "/mh config opens the options panel")
-for _, n in ipairs({"MageHelperOneButton", "MageHelperMinimapButton", "MageHelperBuffMinimapButton", "MageHelperAnalyzerMinimapButton", "MageHelperBuff_FMSet", "MageHelperBuff_armor", "MageHelperBuff_brilliance", "MageHelperBuff_fmin", "MageHelperBuff_fmout", "MageHelperBuff_flask", "MageHelperBuff_wild"}) do
+for _, n in ipairs({"MageHelperOneButton", "MageHelperMinimapButton", "MageHelperBuffMinimapButton", "MageHelperAnalyzerMinimapButton", "MageHelperBuff_FMSet", "MageHelperBuff_armor", "MageHelperBuff_brilliance", "MageHelperBuff_fmin", "MageHelperBuff_fmout", "MageHelperBuff_flask", "MageHelperBuff_potion"}) do
   local f = FRAMES[n]; if f and f.__scripts.OnEnter then f.__scripts.OnEnter(f) end
 end
 FRAMES.MageHelperOneButton.__scripts.OnClick(FRAMES.MageHelperOneButton)
@@ -1132,6 +1132,80 @@ PLAYER_TALENTS, PET, COOLDOWNS, ITEM_COOLDOWNS, DEBUFFS.target = nil, false, {},
 OUT[#OUT + 1] = "FROST OK"
 '''
 
+# Potion choice: auto by the active rotation, fixed potions and none; cooldown macros of all three
+# rotations, buff bar by buff ID, changes in combat only after combat.
+POTION = r'''
+local P = FRAMES.MageHelperBuff_potion
+local C = MH.db.char
+local function upd(n) for i = 1, (n or 3) do Tick(0.15) end end
+local function macro(k) return FRAMES["MageHelperButton_" .. k].__attr.macrotext end
+local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
+local function has(k, item) return macro(k):find("/use item:" .. item, 1, true) ~= nil end
+local function potionLines(k) local n = 0; for _ in macro(k):gmatch("/use item:4021[12]") do n = n + 1 end
+  for _ in macro(k):gmatch("/use item:33448") do n = n + 1 end; for _ in macro(k):gmatch("/use item:40093") do n = n + 1 end; return n end
+local function active() upd(1); return P.timer.__text ~= "!" and P.timer.__text ~= "" end
+local function grey() upd(1); return P.timer.__text == "" and string.format("%.2f", P.status.__vc[1]) == "0.55" end
+local function drink(buffId) AURAS.player = { { GetSpellInfo(buffId) or "Potion", 0, GetTime() + 15, buffId } } end
+INCOMBAT, PLAYER_TALENTS, AURAS.player, EQUIPPED, KNOWN = false, nil, {}, {}, {}
+Slash("rota auto"); upd()
+check(C.potion == "auto", "default potion choice is auto")
+check(shown("lb"), "Fire rotation")
+-- Fire: Wild Magic in the cd macro, Mana Sapphire stays, Flame Cap is gone
+check(has("cd", 40212) and potionLines("cd") == 1, "Fire cd macro uses Potion of Wild Magic: " .. macro("cd"))
+check(has("cd", 33312), "Fire cd macro keeps the Mana Sapphire")
+check(not macro("cd"):find("22788", 1, true), "Flame Cap removed")
+check(macro("cd"):find("/cast " .. GetSpellInfo(55342), 1, true), "Fire cd macro casts Mirror Image")
+check(tostring(P.icon.__tex):find("item40212", 1, true), "buff bar icon: Wild Magic: " .. tostring(P.icon.__tex))
+check(not active(), "no potion buff: missing")
+drink(53908); check(not active(), "Speed buff does not count for Fire auto")
+drink(53909); check(active(), "Wild Magic buff counts (by ID)")
+AURAS.player = {}
+-- Arcane and Frost: Speed
+Slash("rota arkan"); upd()
+check(has("ap", 40211) and potionLines("ap") == 1, "Arcane AP macro uses Potion of Speed: " .. macro("ap"))
+check(tostring(P.icon.__tex):find("item40211", 1, true), "buff bar icon follows the rotation: " .. tostring(P.icon.__tex))
+drink(53908); check(active(), "Arcane: Speed buff counts"); AURAS.player = {}
+Slash("rota frost"); upd()
+check(has("fcd", 40211) and potionLines("fcd") == 1, "Frost cd macro uses Potion of Speed: " .. macro("fcd"))
+check(macro("fcd"):find("/cast " .. GetSpellInfo(55342), 1, true), "Frost cd macro still casts Mirror Image")
+-- fixed choices
+Slash("trank wild"); check(C.potion == "wildmagic" and has("fcd", 40212) and has("ap", 40212) and has("cd", 40212), "fixed Wild Magic in all macros")
+Slash("potion indestructible"); check(C.potion == "indestructible" and has("fcd", 40093) and potionLines("fcd") == 1, "fixed Indestructible")
+drink(53762); check(active(), "Indestructible buff counts"); AURAS.player = {}
+Slash("trank mana"); check(C.potion == "runicmana" and has("fcd", 33448) and has("ap", 33448), "fixed Runic Mana")
+check(grey(), "Runic Mana: buff bar grey (no buff to check)")
+check(tostring(P.icon.__tex):find("item33448", 1, true), "Runic Mana icon")
+Slash("trank aus"); check(C.potion == "none" and potionLines("fcd") == 0 and potionLines("ap") == 0 and potionLines("cd") == 0, "none: no potion line")
+check(has("cd", 33312), "none: Mana Sapphire stays")
+check(grey(), "none: buff bar grey")
+Slash("potion speed"); check(C.potion == "speed" and has("cd", 40211), "English alias speed")
+Slash("trank tempo"); Slash("trank"); Slash("potion bogus")
+-- in combat: no protected change, applies after combat
+Slash("rota feuer"); Slash("trank auto"); upd()
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd()
+Slash("trank unzerstoerbar")
+check(C.potion == "indestructible" and has("cd", 40212) and not has("cd", 40093), "in combat the cd macro keeps Wild Magic")
+check(tostring(P.icon.__tex):find("item40212", 1, true), "in combat the buff bar keeps the potion in the macro")
+P.__scripts.OnEnter(P)
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(has("cd", 40093) and not has("cd", 40212), "after combat the cd macro uses the new potion")
+check(tostring(P.icon.__tex):find("item40093", 1, true), "after combat the buff bar follows")
+P.__scripts.OnEnter(P)
+-- options
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local v = o.args.general.args.potion.values()
+check(v.auto and v.none and v.speed and v.wildmagic and v.runicmana and v.indestructible, "options list the potions")
+OUT[#OUT + 1] = "POTION AUTO " .. v.auto .. " / " .. v.none
+o.args.general.args.potion.set({ "general", "potion" }, "speed")
+check(C.potion == "speed" and has("cd", 40211), "potion via options")
+C.potion = "bogus"
+check(o.args.general.args.potion.get() == "auto", "invalid potion value shows as auto")
+C.potion = "auto"; Slash("trank auto")
+check(has("cd", 40212), "back to auto: Wild Magic for Fire")
+AURAS.player = {}
+OUT[#OUT + 1] = "POTION OK"
+'''
+
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
 
 version, files = toc_files()
@@ -1152,14 +1226,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST)):
+        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)
