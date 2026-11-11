@@ -1,6 +1,6 @@
 # MageHelper
 
-Fire and Arcane Mage helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (Interface 30300), made for private servers. Works on German and English clients.
+Fire, Arcane and Frost Mage helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (Interface 30300), made for private servers. Works on German and English clients.
 
 *Deutsche Kurzfassung weiter unten.*
 
@@ -8,7 +8,8 @@ Fire and Arcane Mage helper for **World of Warcraft: Wrath of the Lich King 3.3.
 
 - **Rotation bar:** shows what to cast next – Living Bomb timing (never clip before the explosion), Hot Streak → Pyroblast, Combustion window, burst queue after Combustion (Mirror Image, potion, gloves), Fireballs per minute and cast-gap warnings. Includes a one-button that follows the recommendation.
 - **Arcane rotation:** its own button set (Arcane Blast, Arcane Missiles, Arcane Barrage, Arcane Power with Icy Veins if known, Presence of Mind, Mirror Image, Evocation, Mana Gem). Cooldowns as soon as they are ready (Mirror Image first with the T10 4-piece, Presence of Mind only while burning), Mana Gem in combat when it fills up fully, Evocation in combat below 30% mana, Arcane Missiles on Missile Barrage, Arcane Barrage/Fire Blast while moving. **Burn vs. conserve:** burn (Arcane Blast at 4 stacks) always during Arcane Power, Heroism/Bloodlust or the T10 Mirror Image buff, and while your mana is above a threshold (default 35%); below it, *automatic* keeps burning when the boss's time to die (from its health loss, `boss1`-`boss4` before the target) is shorter than your mana lasts (measured drain while burning, or a Missile Barrage cycle model at the start of a fight, with Mana Gem and Evocation spread over their cooldowns); otherwise conserve (Arcane Blast to 3 stacks, then Arcane Missiles). *Mana* mode uses the threshold only. The info line shows stacks, mana, burn/conserve and cooldowns; `/mh debug on` explains the decision.
-- **Fire or Arcane automatically:** the talent tree with the most points picks the rotation (Frost uses Fire); it switches with your spec, out of combat. Can be fixed in the settings or with `/mh rota`.
+- **Frost rotation:** its own button set (Frostbolt, Ice Lance, Deep Freeze, Frostfire Bolt, a cooldown button for Icy Veins + Mirror Image + on-use trinkets, Cold Snap, Summon Water Elemental, Mana Gem, Evocation). Water Elemental whenever no pet is out, cooldowns as soon as they are ready (Mirror Image first with the T10 4-piece), Mana Gem in combat when it fills up fully, Deep Freeze on Fingers of Frost or a frozen target, Cold Snap when Deep Freeze has more than 15 s left, Frostfire Bolt on Brain Freeze, Frostbolt as filler; while moving Ice Lance (with Fingers of Frost or a frozen target), Fire Blast, then Ice Lance. Based on the SimulationCraft 3.3.3 frost list. The info line shows Fingers of Frost charges, Brain Freeze, the Deep Freeze cooldown, your pet and mana.
+- **Fire, Arcane or Frost automatically:** the talent tree with the most points picks the rotation; it switches with your spec, out of combat. Can be fixed in the settings or with `/mh rota`.
 - **Buff bar:** red/green status for Molten Armor, Arcane Brilliance, Focus Magic in/out, flask, food, Wild Magic, Hyperspeed and Heroism. The expected flask is configurable per character; *automatic* picks the best one for your class and spec (Frost Wyrm, Endless Rage or Stoneblood).
 - **Molten Armor with the T9 2-piece bonus:** click 1 puts on T9 pieces from your bags (found by item ID, any T9 version) until two are worn, click 2 casts Molten Armor, then your previous gear goes back on automatically. The button color shows the step and whether the active armor has the bonus. Can be switched off in the settings.
 - **Focus Magic target picker:** scrollable group list with the filters *only mages* and *only healers without Focus Magic* (healer specs are detected by inspecting talents – handy for Valithria). Save a fixed partner, pick a temporary target, switch back with one click.
@@ -35,7 +36,7 @@ Ace3 is embedded – no other addons are required.
 | --- | --- |
 | `/mh help` | List all commands |
 | `/mh config` | Open the settings window |
-| `/mh rota auto\|fire\|arcane` | Rotation: automatic by talents, or fixed |
+| `/mh rota auto\|fire\|arcane\|frost` | Rotation: automatic by talents, or fixed |
 | `/mh burn auto\|mana [percent]` | Arcane burn/conserve: time-to-die estimate or mana threshold only (10–90%) |
 | `/mh fm` | Open the Focus Magic target picker |
 | `/mh t9` | Show T9 pieces found and the Molten Armor status |
@@ -78,10 +79,11 @@ MageHelper is released under the [MIT License](LICENSE) – you may use, change 
 
 ## Deutsch (Kurzfassung)
 
-Helfer für Feuer- und Arkanmagier in **WotLK 3.3.5a**, für deutsche und englische Clients:
+Helfer für Feuer-, Arkan- und Frostmagier in **WotLK 3.3.5a**, für deutsche und englische Clients:
 
 - **Rota-Leiste** mit Empfehlung für den nächsten Zauber
-- **Arkan-Rota** mit eigenen Buttons; Feuer oder Arkan wird automatisch nach der Skillung gewählt (`/mh rota auto|feuer|arkan`)
+- **Arkan- und Frost-Rota** mit eigenen Buttons; Feuer, Arkan oder Frost wird automatisch nach der Skillung gewählt (`/mh rota auto|feuer|arkan|frost`)
+- **Frost:** Wasserelementar, wenn kein Pet da ist; Eisige Adern, Spiegelbild und Schmuckstücke sofort; Tiefkühlen bei Eisige Finger; Kälteeinbruch, wenn Tiefkühlen noch über 15 s Abklingzeit hat; Frostfeuerblitz bei Hirnfrost; sonst Frostblitz
 - **Burn oder Sparen** bei Arkan: Burn über der Mana-Schwelle und während Arkane Macht/Heldentum; automatisch darunter weiter, solange dein Mana bis zum Tod des Bosses reicht, oder nur nach Mana-Schwelle (`/mh burn auto|mana [Prozent]`)
 - **Buff-Leiste**
 - **Glühende Rüstung mit T9-Bonus:** T9 automatisch an- und danach wieder ausziehen

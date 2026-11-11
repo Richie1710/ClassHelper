@@ -22,6 +22,12 @@ local SPELLS = {
   [42846]={"Arkane Geschosse","Arcane Missiles"}, [44781]={"Arkanbeschuss","Arcane Barrage"},
   [12042]={"Arkane Macht","Arcane Power"}, [12043]={"Geistesgegenwart","Presence of Mind"},
   [12472]={"Eisige Adern","Icy Veins"}, [12051]={"Hervorrufung","Evocation"}, [44401]={"Geschosssalve","Missile Barrage"},
+  -- Frost
+  [42842]={"Frostblitz","Frostbolt"}, [42914]={"Eislanze","Ice Lance"}, [44572]={"Tiefk\195\188hlen","Deep Freeze"},
+  [47610]={"Frostfeuerblitz","Frostfire Bolt"}, [11958]={"K\195\164lteeinbruch","Cold Snap"},
+  [31687]={"Wasserelementar beschw\195\182ren","Summon Water Elemental"}, [74396]={"Eisige Finger","Fingers of Frost"},
+  [44544]={"Eisige Finger","Fingers of Frost"}, [57761]={"Feuerball!","Fireball!"}, [42917]={"Frostnova","Frost Nova"},
+  [33395]={"Einfrieren","Freeze"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -42,7 +48,10 @@ function GetItemCooldown(id) return cd(ITEM_COOLDOWNS[id]) end
 -- KNOWN[spellId] = false makes a spell unknown (default: every spell is known)
 KNOWN = {}
 function IsSpellKnown(id) return KNOWN[id] ~= false end
-function GetInventoryItemCooldown() return 0, 0, 1 end
+-- SLOT_COOLDOWNS[slot] = seconds left on an equipped item; ITEM_USE[itemId] = name of its use effect
+SLOT_COOLDOWNS, ITEM_USE = {}, {}
+function GetInventoryItemCooldown(unit, slot) return cd(SLOT_COOLDOWNS[slot]) end
+function GetItemSpell(id) return ITEM_USE[id] end
 function GetManaRegen() return 0, 0 end      -- base, in combat (mana per second)
 function GetAddOnMetadata(a, k) if k == "Version" then return ADDON_VERSION end end
 function print(...)
@@ -133,7 +142,9 @@ function UnitHealth(u)
   return 100
 end
 function UnitHealthMax() return 100 end
-function UnitExists(u) return (u == "target" and not NOTARGET) or raidEntry(u) ~= nil or BOSSES[u] ~= nil end
+-- PET = true while the player's pet (Water Elemental) is out
+PET = false
+function UnitExists(u) return (u == "target" and not NOTARGET) or (u == "pet" and PET == true) or raidEntry(u) ~= nil or BOSSES[u] ~= nil end
 function UnitIsDead(u) return BOSSES[u] ~= nil and BOSSES[u].dead or false end
 function UnitIsDeadOrGhost(u) local e = raidEntry(u); return e and e.dead or false end
 function UnitCanAttack(a, b) if BOSSES[b] then return BOSSES[b].attackable ~= false end return b == "target" and not NOTARGET end

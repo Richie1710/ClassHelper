@@ -699,7 +699,7 @@ check(KR.info.__text:find("FB/min", 1, true), "Fire info line")
 Slash("rota arkan"); check(shown("ab") and not shown("lb"), "/mh rota arkan")
 Slash("rota auto"); check(shown("ab"), "auto with Arcane talents")
 PLAYER_TALENTS = { 0, 55, 16 }; FireEvent("ACTIVE_TALENT_GROUP_CHANGED"); check(shown("lb") and not shown("ab"), "spec switch to Fire")
-PLAYER_TALENTS = { 0, 17, 54 }; FireEvent("PLAYER_TALENT_UPDATE"); check(shown("lb"), "Frost uses Fire")
+PLAYER_TALENTS = { 0, 17, 54 }; FireEvent("PLAYER_TALENT_UPDATE"); check(shown("fbolt") and not shown("lb") and not shown("ab"), "Frost talents: Frost")
 Slash("rota"); Slash("burn"); Slash("rota bogus")
 
 -- options
@@ -714,6 +714,149 @@ Slash("help")
 Slash("debug off"); Slash("rota auto")
 PLAYER_TALENTS, DEBUFFS.player = nil, {}
 OUT[#OUT + 1] = "ARCANE OK"
+'''
+
+# Frost rotation: auto mode by talents, button set, Water Elemental, cooldown button (Icy Veins,
+# Mirror Image, trinkets, T10 order), gem/Evocation, Deep Freeze on Fingers of Frost or a frozen
+# target, Cold Snap, Brain Freeze, movement, switching modes in combat.
+FROST = r'''
+local KR = MageHelperFrame
+local de = GetLocale() == "deDE"
+local function upd(n) for i = 1, (n or 3) do Tick(0.15) end end
+local function reco() return FRAMES.MageHelperOneButton.currentKey end
+local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
+local function macro(k) return FRAMES["MageHelperButton_" .. k].__attr.macrotext end
+local function btnState(k) return FRAMES["MageHelperButton_" .. k].state end
+local function info() return KR.info.__text end
+local function S(id) return (GetSpellInfo(id)) end
+local DF, SNAP, ELE, IV, MI, FBL = S(44572), S(11958), S(31687), S(12472), S(55342), S(42873)
+local FOF = { S(74396), 2, nil, 74396 }
+local FROZEN = { { S(42917), 0, nil, 42917, "player" } }
+
+INCOMBAT, MOVING, NOTARGET, TARGETNAME, TARGET_HP, PET = false, false, nil, "Dummy", 100, false
+AURAS.player, DEBUFFS.player, DEBUFFS.target, BOSSES = {}, {}, {}, {}
+EQUIPPED, BAGS = {}, { [0] = { "|Hitem:33312|h[Mana Sapphire]|h" } }
+COOLDOWNS, ITEM_COOLDOWNS, SLOT_COOLDOWNS, ITEM_USE, KNOWN = {}, {}, {}, {}, {}
+PLAYER_MANA, PLAYER_MANA_MAX = 30000, 30000
+Slash("rota auto")
+PLAYER_TALENTS = { 0, 0, 0 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
+check(shown("lb") and not shown("fbolt"), "no talents: Fire")
+PLAYER_TALENTS = { 18, 0, 53 }; FireEvent("PLAYER_TALENT_UPDATE"); upd()
+check(MH.db.profile.rotationMode == "auto", "auto mode")
+for _, k in ipairs({ "fbolt", "ilance", "dfreeze", "ffb", "fcd", "csnap", "elem", "gem", "evo", "fb_move", "ice", "invis", "stop" }) do check(shown(k), "Frost button shown: " .. k) end
+for _, k in ipairs({ "lb", "pyro", "fireball", "comb", "cd", "ab", "am", "abarr", "ap", "pom", "mirror" }) do check(not shown(k), "Fire/Arcane button hidden: " .. k) end
+local m = macro("fcd")
+check(m:find("#showtooltip " .. IV, 1, true) and m:find("/use 13", 1, true) and m:find("/use 14", 1, true), "cooldown button macro: " .. m)
+check(m:find("/cast " .. IV, 1, true) < m:find("/cast " .. MI, 1, true), "without T10: Icy Veins before Mirror Image")
+
+-- Water Elemental whenever no pet is out (also out of combat); out of combat no cooldowns, gem or Evocation
+upd(); check(reco() == "elem", "no pet: Water Elemental (" .. tostring(reco()) .. ")")
+PET = true; upd(); check(reco() == "fbolt", "pet out, out of combat: Frostbolt (" .. tostring(reco()) .. ")")
+PLAYER_MANA = 3000; upd(); check(reco() == "fbolt", "out of combat: no Mana Gem or Evocation (" .. tostring(reco()) .. ")")
+PLAYER_MANA = 30000
+
+-- cooldowns only in combat with a target
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); NOTARGET = true; upd()
+check(reco() ~= "fcd", "in combat without a target: no cooldowns (" .. tostring(reco()) .. ")")
+NOTARGET = nil; upd(); check(reco() == "fcd", "in combat with a target: cooldown button")
+check(info():find(IV, 1, true), "Icy Veins named: " .. info())
+check(not pcall(FRAMES.MageHelperButton_fbolt.Hide, FRAMES.MageHelperButton_fbolt), "stub: secure button Hide() blocked in combat")
+COOLDOWNS[IV] = 100; upd(); check(reco() == "fcd" and info():find(MI, 1, true), "Icy Veins on CD: Mirror Image via the button")
+COOLDOWNS[MI] = 1.2; upd()   -- only the GCD runs on Mirror Image
+check(reco() == "fcd" and btnState("fcd") == "prep", "GCD: stays recommended, not clickable yet (" .. tostring(btnState("fcd")) .. ")")
+COOLDOWNS[MI] = 100; upd(); check(reco() == "fbolt", "all cooldowns used: Frostbolt")
+-- on-use trinket (a passive one doesn't count)
+EQUIPPED[14] = "|Hitem:50353|h[x]|h"; upd(); check(reco() == "fbolt", "passive trinket: no cooldown hint")
+EQUIPPED[13] = "|Hitem:50365|h[x]|h"; ITEM_USE[50365] = "Use"; upd()
+check(reco() == "fcd" and btnState("fcd") == "urgent", "on-use trinket ready: cooldown button (" .. tostring(btnState("fcd")) .. ")")
+SLOT_COOLDOWNS[13] = 60; upd(); check(reco() == "fbolt", "trinket on CD: Frostbolt")
+EQUIPPED, SLOT_COOLDOWNS, ITEM_USE = {}, {}, {}
+-- T10 4-piece: Mirror Image first; the macro changes only after combat
+COOLDOWNS[IV], COOLDOWNS[MI] = nil, nil
+EQUIPPED = { [1] = "|Hitem:51281|h[x]|h", [3] = "|Hitem:51155|h[x]|h", [5] = "|Hitem:50278|h[x]|h", [7] = "|Hitem:51282|h[x]|h" }
+FireEvent("UNIT_INVENTORY_CHANGED", "player"); upd()
+check(reco() == "fcd" and info():find("T10", 1, true), "T10: Mirror Image first (" .. info() .. ")")
+check(macro("fcd") == m, "macro unchanged in combat")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd(1)
+m = macro("fcd")
+check(m:find("/cast " .. MI, 1, true) < m:find("/cast " .. IV, 1, true), "T10 after combat: Mirror Image before Icy Veins: " .. m)
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
+EQUIPPED = {}; FireEvent("UNIT_INVENTORY_CHANGED", "player")
+COOLDOWNS[IV], COOLDOWNS[MI] = 100, 100
+
+-- the pet dies in combat: summon again (unless on cooldown)
+PET = false; upd(); check(reco() == "elem", "pet died: Water Elemental")
+COOLDOWNS[ELE] = 150; upd(); check(reco() == "fbolt", "Water Elemental on CD: Frostbolt")
+PET, COOLDOWNS[ELE] = true, nil
+
+-- Mana Gem when the missing mana >= its yield
+PLAYER_MANA = 27000; upd(); check(reco() == "fbolt", "3000 missing: no gem yet")
+PLAYER_MANA = 26000; upd(); check(reco() == "gem", "4000 missing: Mana Gem")
+ITEM_COOLDOWNS[33312] = 60; PLAYER_MANA = 30000
+
+-- Deep Freeze on Fingers of Frost (both aura IDs) or a frozen target
+AURAS.player = { FOF }; upd()
+check(reco() == "dfreeze", "Fingers of Frost: Deep Freeze (" .. tostring(reco()) .. ")")
+check(info():find("FoF: |cff33ff332", 1, true), "info line shows 2 FoF charges: " .. info())
+COOLDOWNS[DF] = 1.2; upd(); check(reco() == "dfreeze", "Deep Freeze stays recommended during the GCD")
+COOLDOWNS[DF] = nil
+AURAS.player = { { S(44544), 0, nil, 44544 } }; upd(); check(reco() == "dfreeze", "Fingers of Frost (44544): Deep Freeze")
+AURAS.player = {}; DEBUFFS.target = FROZEN; upd(); check(reco() == "dfreeze", "frozen target: Deep Freeze")
+DEBUFFS.target = {}; upd(); check(reco() == "fbolt", "nothing up: Frostbolt")
+
+-- Cold Snap when Deep Freeze has more than 15 s left (only if known)
+AURAS.player = { FOF }; COOLDOWNS[DF] = 28; upd()
+check(reco() == "csnap", "Deep Freeze 28 s CD: Cold Snap (" .. tostring(reco()) .. ")")
+check(info():find("DF 28", 1, true), "info line: Deep Freeze cooldown: " .. info())
+KNOWN[11958] = false; upd(); check(reco() == "fbolt", "Cold Snap not talented: Frostbolt (also with FoF)")
+KNOWN[11958] = nil
+COOLDOWNS[DF] = 12; upd(); check(reco() == "fbolt", "Deep Freeze 12 s CD: no Cold Snap")
+COOLDOWNS[SNAP], COOLDOWNS[DF] = 400, 28; upd(); check(reco() == "fbolt", "Cold Snap on CD: Frostbolt")
+AURAS.player = {}
+
+-- Brain Freeze: Frostfire Bolt
+AURAS.player = { { S(57761), 0, nil, 57761 } }; upd()
+check(reco() == "ffb" and info():find("BF!", 1, true), "Brain Freeze: Frostfire Bolt (" .. tostring(reco()) .. ")")
+MOVING = true; upd(); check(reco() == "ffb", "Brain Freeze while moving: Frostfire Bolt (instant)")
+
+-- moving: Ice Lance with FoF or frozen, else Fire Blast, else Ice Lance
+AURAS.player = { FOF }; upd(); check(reco() == "ilance", "moving with FoF: Ice Lance")
+AURAS.player = {}; upd(); check(reco() == "fb_move", "moving without FoF: Fire Blast")
+DEBUFFS.target = FROZEN; upd(); check(reco() == "ilance", "moving, frozen target: Ice Lance")
+DEBUFFS.target = {}; COOLDOWNS[FBL] = 5; upd(); check(reco() == "ilance", "moving, Fire Blast on CD: Ice Lance")
+MOVING, COOLDOWNS[FBL] = false, nil
+
+-- Evocation in combat below 30% mana
+PLAYER_MANA = 6000; upd(); check(reco() == "evo", "20% mana: Evocation")
+INCOMBAT = false; upd(); check(reco() == "fbolt", "out of combat: no Evocation")
+INCOMBAT = true; PLAYER_MANA = 30000; AURAS.player = { FOF, { S(57761), 0, nil, 57761 } }; upd()
+OUT[#OUT + 1] = "FROST INFO " .. info()
+AURAS.player = {}
+Slash("debug on"); upd(); OUT[#OUT + 1] = "FROST DEBUG " .. KR.debugInfo.__text; Slash("debug off")
+
+-- fight report: no Fireball rating
+local mark = #OUT
+Slash("report")
+local report = table.concat(OUT, "\n", mark + 1)
+check(report:find(de and "Frost-Rota: keine Feuerball-Wertung" or "Frost rotation: no Fireball rating", 1, true), "Frost fight report: " .. report)
+
+-- switching the rotation in combat waits for the end of the fight; Fire and Arcane unchanged
+Slash("rota feuer")
+check(MH.db.profile.rotationMode == "fire" and shown("fbolt") and not shown("lb"), "in combat the Frost buttons stay")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(shown("lb") and not shown("fbolt") and not shown("fcd"), "after combat: Fire buttons")
+AURAS.player = { { "Hot Streak", 0, nil, 48108 } }; upd(); check(reco() == "pyro", "Fire rotation: Hot Streak -> Pyroblast"); AURAS.player = {}
+Slash("rota frost"); check(MH.db.profile.rotationMode == "frost" and shown("fbolt") and not shown("lb"), "/mh rota frost")
+Slash("rota arkan"); upd(); check(shown("ab") and not shown("fbolt") and (reco() == "ab" or reco() == "am"), "/mh rota arkan")
+Slash("rota auto"); check(shown("fbolt"), "auto with Frost talents")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+check(o.args.rotation.args.rotationMode.values().frost ~= nil, "rotation mode value frost")
+o.args.rotation.args.rotationMode.set({ "rotation", "rotationMode" }, "fire"); check(shown("lb"), "options: Fire")
+o.args.rotation.args.rotationMode.set({ "rotation", "rotationMode" }, "frost"); check(shown("fbolt"), "options: Frost")
+Slash("rota")
+Slash("rota auto")
+PLAYER_TALENTS, PET, COOLDOWNS, ITEM_COOLDOWNS, DEBUFFS.target = nil, false, {}, {}, {}
+OUT[#OUT + 1] = "FROST OK"
 '''
 
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
@@ -736,14 +879,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE)):
+        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("frost", FROST)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "FROST", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)
