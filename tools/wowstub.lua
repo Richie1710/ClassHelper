@@ -33,7 +33,7 @@ local SPELLS = {
   [53908]={"Geschwindigkeit","Speed"}, [53909]={"Wilde Magie","Wild Magic"},
   [53762]={"Unzerst\195\182rbar","Indestructible"}, [43186]={"Mana wiederherstellen","Restore Mana"},
   -- Professor Putricide: Tear Gas cast and stun
-  [71617]={"Tr95tnengas","Tear Gas"}, [71615]={"Tr95tnengas","Tear Gas"},
+  [71617]={"Tr\195\164nengas","Tear Gas"}, [71615]={"Tr\195\164nengas","Tear Gas"},
   [41425]={"Unterk\195\188hlung","Hypothermia"},
 }
 function GetLocale() return LOCALE end
