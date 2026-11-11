@@ -1,0 +1,89 @@
+# MageHelper
+
+Fire Mage helper for **World of Warcraft: Wrath of the Lich King 3.3.5a** (Interface 30300), made for private servers. Works on German and English clients.
+
+*Deutsche Kurzfassung weiter unten.*
+
+## Features
+
+- **Rotation bar:** shows what to cast next – Living Bomb timing (never clip before the explosion), Hot Streak → Pyroblast, Combustion window, burst queue after Combustion (Mirror Image, potion, gloves), Fireballs per minute and cast-gap warnings. Includes a one-button that follows the recommendation.
+- **Buff bar:** red/green status for Molten Armor (with a T9-legs swap helper), Arcane Brilliance, Focus Magic in/out, flask, food, Wild Magic, Hyperspeed and Heroism.
+- **Focus Magic target picker:** scrollable group list with the filters *only mages* and *only healers without Focus Magic* (healer specs are detected by inspecting talents – handy for Valithria). Save a fixed partner, pick a temporary target, switch back with one click.
+- **ICC helpers:** Ice Block for boss mechanics (Pungent Blight, Boiling Blood, Swarming Shadows), Sindragosa stack warnings, Putricide Malleable Goo, Blood Queen essence, mandatory interrupts and Lich King threat.
+- **Analyzer:** boss fight and training-dummy runs with A/B comparison, fight report and death recap.
+- **Settings window and profiles** (Ace3): `/mh config` or *Interface → AddOns → MageHelper*. Every character starts with its own profile; profiles can be shared or copied.
+
+## Installation
+
+1. Download or clone this repository into `World of Warcraft\Interface\AddOns\`.
+2. The folder must be named exactly **`MageHelper`** (WoW only loads it when the folder matches `MageHelper.toc`). If you downloaded the ZIP, rename `MageHelper-main` to `MageHelper`.
+3. Restart the game completely (a new addon folder is not picked up by `/reload`).
+
+```bash
+git clone https://github.com/Richie1710/MageHelper.git MageHelper
+```
+
+Ace3 is embedded – no other addons are required.
+
+## Usage
+
+| Command | What it does |
+| --- | --- |
+| `/mh help` | List all commands |
+| `/mh config` | Open the settings window |
+| `/mh fm` | Open the Focus Magic target picker |
+| `/mh lang auto\|de\|en` | Display language (default: client language) |
+| `/mh analyse` | Open the analyzer window |
+| `/mh debug on` | Live line explaining why something is recommended |
+
+`/magehelper` works as an alias for `/mh`.
+
+## Development
+
+There is no build step; the game loads the files straight from the folder. `tools/smoke.py` runs the addon (including the embedded Ace3) outside the game in Lua 5.1 against a fake WoW API (`tools/wowstub.lua`), once as a German and once as an English client:
+
+```bash
+py -m venv venv
+venv\Scripts\pip install lupa
+venv\Scripts\python -I tools\smoke.py
+```
+
+It replays a fight, every slash command, the settings window, profile switching and the Focus Magic picker, and exits with code 1 on any failed check or Lua error. It does not replace testing in the game.
+
+## Credits
+
+- Embedded libraries: [Ace3](https://www.wowace.com/projects/ace3) (Release-r960) by the Ace3 Development Team, see [`Libs/Ace3-LICENSE.txt`](Libs/Ace3-LICENSE.txt).
+- Original addon (KahuRota) by Kahu/Shiro.
+
+## AI disclaimer
+
+Parts of this addon's source code, its tests and this README were created or revised with the help of generative AI (an AI coding assistant), under the direction of the maintainer. This includes the German/English localization, the Focus Magic target picker, the move to Ace3 and the out-of-game smoke test. Changes are checked with the automated smoke test outside the game; they are not guaranteed to have been tested in every in-game situation. Please report problems as an issue.
+
+This notice is given voluntarily for transparency.
+
+---
+
+## Deutsch (Kurzfassung)
+
+Helfer für Feuermagier in **WotLK 3.3.5a**, für deutsche und englische Clients:
+
+- **Rota-Leiste** mit Empfehlung für den nächsten Zauber
+- **Buff-Leiste**
+- **MF-Ziel-Auswahl** mit den Filtern „nur Mages“ und „nur Heiler ohne MF“
+- **ICC-Hinweise**
+- **Analyzer**
+- **Einstellungsfenster mit Profilen** (`/mh config`)
+
+**Installation:**
+1. Den Ordner als **`MageHelper`** nach `Interface\AddOns\` legen. Beim ZIP-Download `MageHelper-main` in `MageHelper` umbenennen.
+2. Das Spiel komplett neu starten.
+
+Alle Befehle zeigt `/mh help`.
+
+**KI-Hinweis:** Teile des Quellcodes, der Tests und dieser README wurden unter Anleitung des Maintainers mit Unterstützung generativer KI (eines KI-Programmierassistenten) erstellt oder überarbeitet. Das betrifft unter anderem:
+- die deutsch-englische Lokalisierung
+- die MF-Ziel-Auswahl
+- den Umbau auf Ace3
+- den Test außerhalb des Spiels
+
+Änderungen werden mit dem automatisierten Test außerhalb des Spiels geprüft. Dass sie in jeder Spielsituation getestet wurden, ist nicht garantiert. Probleme bitte als Issue melden. Dieser Hinweis erfolgt freiwillig zur Transparenz.

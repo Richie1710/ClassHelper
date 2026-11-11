@@ -263,7 +263,7 @@ local L_EN = {
     ["Feuerschlag in Bewegung vorschlagen"] = "Suggest Fire Blast while moving",
     ["Handschuhe (/use 10) in den Spell-Buttons"] = "Gloves (/use 10) in the spell buttons",
     ["Boss-Mechaniken"] = "Boss mechanics",
-    ["Eisblock bei Boss-Mechaniken (Festergut, Lady, Saurfang)"] = "Ice Block for boss mechanics (Festergut, Lady, Saurfang)",
+    ["Eisblock bei Boss-Mechaniken (Stechende Seuche, Kochendes Blut, Schwärmende Schatten)"] = "Ice Block for boss mechanics (Pungent Blight, Boiling Blood, Swarming Shadows)",
     ["Eisblock-Vorlauf vor Boss-Casts (Sekunden)"] = "Ice Block lead time before boss casts (seconds)",
     ["Nach Eisblock Abbruch-Hinweis zeigen"] = "Show cancel hint after Ice Block",
     ["ICC-Hinweise (Sindragosa, Putricide, Blutkönigin, Lady)"] = "ICC hints (Sindragosa, Putricide, Blood Queen, Lady)",
@@ -2609,7 +2609,7 @@ local function SetupOptions(db)
                 end),
             } },
             bosses = { type = "group", name = L("Boss-Mechaniken"), order = 3, get = get, set = set, args = {
-                bossSkips = toggle(L("Eisblock bei Boss-Mechaniken (Festergut, Lady, Saurfang)"), 1),
+                bossSkips = toggle(L("Eisblock bei Boss-Mechaniken (Stechende Seuche, Kochendes Blut, Schwärmende Schatten)"), 1),
                 iceBlockLead = range(L("Eisblock-Vorlauf vor Boss-Casts (Sekunden)"), 2, 0, 3, 0.1),
                 iceCancelHelper = toggle(L("Nach Eisblock Abbruch-Hinweis zeigen"), 3),
                 iccUtility = toggle(L("ICC-Hinweise (Sindragosa, Putricide, Blutkönigin, Lady)"), 4),
