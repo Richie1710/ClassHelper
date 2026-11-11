@@ -110,7 +110,7 @@ CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42832, "Some 
 CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55362, LB, 4)
 -- own damage: spell hit, LB tick, LB explosion; other player's damage is ignored
 CL("SPELL_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42833, FB, 4, 1000, 0, 4, 0, 0, 0, nil, nil, nil)
-CL("SPELL_PERIODIC_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55360, LB, 4, 200, 0, 4, 0, 0, 0, nil, nil, nil)
+CL("SPELL_PERIODIC_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55360, "Other Name", 4, 200, 0, 4, 0, 0, 0, nil, nil, nil)
 CL("SPELL_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55362, LB, 4, 30, 0, 4, 0, 0, 0, nil, nil, nil)
 CL("SPELL_DAMAGE", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 42833, FB, 4, 99999, 0, 4, 0, 0, 0, nil, nil, nil)
 CL("SPELL_PERIODIC_DAMAGE", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 55360, LB, 4, 99999, 0, 4, 0, 0, 0, nil, nil, nil)

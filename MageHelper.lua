@@ -3408,7 +3408,7 @@ function KR:COMBAT_LOG_EVENT_UNFILTERED(...)
         if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0) end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, sname, amount, overkill) end
     elseif event == "SPELL_PERIODIC_DAMAGE" then
-        local _, sname, _, amount, overkill = select(9, ...)
+        local sid, sname, _, amount, overkill = select(9, ...)
         if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0); if M.IsSpell("lb", sid, sname) then AnalyzerAdd("lbTicks", 1) end end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, sname, amount, overkill) end
     elseif event == "SWING_DAMAGE" then
