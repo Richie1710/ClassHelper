@@ -22,6 +22,7 @@ local SPELLS = {
   [42846]={"Arkane Geschosse","Arcane Missiles"}, [44781]={"Arkanbeschuss","Arcane Barrage"},
   [12042]={"Arkane Macht","Arcane Power"}, [12043]={"Geistesgegenwart","Presence of Mind"},
   [12472]={"Eisige Adern","Icy Veins"}, [12051]={"Hervorrufung","Evocation"}, [44401]={"Geschosssalve","Missile Barrage"},
+  [30449]={"Zauberraub","Spellsteal"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -121,6 +122,20 @@ function UnitDebuff(unit, i)
   if not a then return nil end
   return a[1], nil, "icon", a[2] or 0, nil, 10, a[3] or (now + 10), a[5] or "player", nil, nil, a[4]
 end
+-- UnitAura(unit, i, "HELPFUL"/"HARMFUL") reads AURAS/DEBUFFS; the 6th field is isStealable, returned
+-- as the 9th value like 3.3.5 does (1 or nil). The icon is "aura<spellId>".
+AURA_CALLS = 0
+function UnitAura(unit, i, filter)
+  AURA_CALLS = AURA_CALLS + 1
+  local src = (filter and filter:find("HARMFUL", 1, true)) and DEBUFFS or AURAS
+  local a = src[unit] and src[unit][i]
+  if not a then return nil end
+  return a[1], nil, "aura" .. tostring(a[4]), a[2] or 0, "Magic", 10, a[3] or (now + 10), a[5] or "player", a[6], nil, a[4]
+end
+-- RANGE[unit] = 0 makes IsSpellInRange report out of range (default 1 for an existing unit)
+RANGE, USABLE = {}, {}
+function IsSpellInRange(spell, unit) if not UnitExists(unit) then return nil end return RANGE[unit] or 1 end
+function IsUsableSpell(spell) if USABLE[spell] == false then return nil, 1 end return 1, nil end
 -- mana and target health for the Arcane rotation
 PLAYER_MANA, PLAYER_MANA_MAX, TARGET_HP = 30000, 30000, 100
 function UnitPower(u) if u == "player" then return PLAYER_MANA end return 0 end
@@ -133,14 +148,23 @@ function UnitHealth(u)
   return 100
 end
 function UnitHealthMax() return 100 end
-function UnitExists(u) return (u == "target" and not NOTARGET) or raidEntry(u) ~= nil or BOSSES[u] ~= nil end
-function UnitIsDead(u) return BOSSES[u] ~= nil and BOSSES[u].dead or false end
+-- focus: FOCUS = { name=, hostile=, dead= } or nil (no focus)
+function UnitExists(u) return (u == "target" and not NOTARGET) or (u == "focus" and FOCUS ~= nil) or raidEntry(u) ~= nil or BOSSES[u] ~= nil end
+function UnitIsDead(u)
+  if u == "focus" then return FOCUS ~= nil and FOCUS.dead or false end
+  return BOSSES[u] ~= nil and BOSSES[u].dead or false
+end
 function UnitIsDeadOrGhost(u) local e = raidEntry(u); return e and e.dead or false end
-function UnitCanAttack(a, b) if BOSSES[b] then return BOSSES[b].attackable ~= false end return b == "target" and not NOTARGET end
+function UnitCanAttack(a, b)
+  if BOSSES[b] then return BOSSES[b].attackable ~= false end
+  if b == "focus" then return FOCUS ~= nil and FOCUS.hostile ~= false end
+  return b == "target" and not NOTARGET and not TARGET_FRIENDLY
+end
 function UnitIsFriend(a, b) return raidEntry(b) ~= nil end
 function UnitIsPlayer(u) return raidEntry(u) ~= nil end
 function UnitName(u)
   if u == "target" then return TARGETNAME or "Training Dummy" end
+  if u == "focus" then return FOCUS and FOCUS.name end
   if BOSSES[u] then return BOSSES[u].name end
   local e = raidEntry(u); return e and e.name
 end
