@@ -1,0 +1,11 @@
+## Interface: 30300
+## Title: MageHelper
+## Notes: Fire Mage WotLK Parse Helper + Analyzer for Kahuchan
+## Notes-deDE: Feuermagier-Helfer (WotLK) mit Rota-Anzeige, Buff-Leiste und Analyzer
+## Author: Kahu/Shiro
+## Version: 3.0
+## OptionalDeps: Ace3
+## SavedVariables: MageHelperDB
+## SavedVariablesPerCharacter: MageHelperLegacyDB
+embeds.xml
+MageHelper.lua
