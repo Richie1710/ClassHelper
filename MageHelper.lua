@@ -1,4 +1,4 @@
--- MageHelper v3.0 Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
+-- MageHelper v3.1 Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
 -- WotLK 3.3.5 Fire Mage helper: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
 local ADDON = "MageHelper"
@@ -6,7 +6,7 @@ local MH = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceEvent-3.0", "AceTimer-3.0
 -- KR is the main rotation bar. Its KR:<EVENT> handlers are registered through AceEvent in MH:OnEnable.
 local KR = CreateFrame("Frame", "MageHelperFrame", UIParent)
 -- Settings (AceDB, set in MH:OnInitialize): cfg = active profile, shareable between characters;
--- chr = data that belongs to this character only (FM partner/target, T9 legs, analyzer runs).
+-- chr = data that belongs to this character only (FM partner/target, T9 swap, analyzer runs).
 local cfg, chr
 
 local defaults = {
@@ -30,6 +30,7 @@ local defaults = {
         fmFilterMages = false,
         fmFilterHealers = false,
         language = "auto",
+        moltenT9 = true,          -- cast Molten Armor with the T9 2-piece bonus (swap T9 on and back)
         bossSkips = true,
         iceBlockLead = 1.0,
         iceCancelHelper = true,
@@ -44,8 +45,7 @@ local defaults = {
     char = {
         focusMagicTarget = "",   -- current Focus Magic target (used by the FM OUT button)
         focusMagicPartner = "",  -- saved mage buddy; "back to partner" restores it (migrated on login)
-        -- moltenT9Legs / moltenMainLegs are filled on first login with item names for the client language.
-        moltenStep = 1,
+        moltenSwap = {},         -- [inventory slot] = item link (or false) taken off for the T9 swap
         analyzer = {
             trainingA = nil,
             trainingB = nil,
@@ -56,7 +56,7 @@ local defaults = {
         },
     },
 }
-local CHAR_KEYS = { focusMagicTarget = true, focusMagicPartner = true, moltenStep = true, moltenT9Legs = true, moltenMainLegs = true, analyzer = true }
+local CHAR_KEYS = { focusMagicTarget = true, focusMagicPartner = true, analyzer = true }
 
 -- Localization: the German UI texts are the keys. L() returns the English text when the
 -- client is not German (or /mh lang en is set); a missing entry falls back to German.
@@ -82,15 +82,9 @@ local L_EN = {
     ["Rota"] = "Rotation",
     ["Zeigt die aktuelle Empfehlung der Rota."] = "Shows the current rotation recommendation.",
     ["Im Kampf kann WoW den Klick-Spell nicht immer wechseln; dann den leuchtenden Einzelbutton nutzen."] = "In combat WoW cannot always switch the click spell; use the glowing single button instead.",
-    ["Zurück"] = "Back",
-    ["T9 Rüst"] = "T9 Armor",
     ["MF IN"] = "FM IN",
     ["MF OUT"] = "FM OUT",
     ["Wilde"] = "Wild",
-    ["Klick: Main-Hose wieder anziehen"] = "Click: equip main legs again",
-    ["Main-Hose nicht gesetzt"] = "Main legs not set",
-    ["Klick: T9-Hose anziehen + %s buffen"] = "Click: equip T9 legs + cast %s",
-    ["T9-Hose nicht gesetzt"] = "T9 legs not set",
     ["MF-Ziel: %s"] = "FM target: %s",
     ["MF-Ziel: kein Ziel gesetzt"] = "FM target: none set",
     ["MageHelper: Fokusmagie-Ziel gesetzt: %s"] = "MageHelper: Focus Magic target set: %s",
@@ -219,9 +213,6 @@ local L_EN = {
     ["MageHelper: /use 10 aus"] = "MageHelper: /use 10 disabled",
     ["MageHelper: Bitte freundliches Ziel anwählen und /mh fm set nutzen"] = "MageHelper: Target a friendly player and use /mh fm set",
     ["MageHelper: Fokusmagie-Ziel gelöscht"] = "MageHelper: Focus Magic target cleared",
-    ["MageHelper: T9-Hose gesetzt: %s"] = "MageHelper: T9 legs set: %s",
-    ["MageHelper: Main-Hose gesetzt: %s"] = "MageHelper: main legs set: %s",
-    ["MageHelper: Molten-Armor-Schritt zurückgesetzt"] = "MageHelper: Molten Armor step reset",
     ["MageHelper: Sprache = %s (Buttons und Fenster nach /reload)"] = "MageHelper: language = %s (buttons and windows after /reload)",
     ["MageHelper Befehle:"] = "MageHelper commands:",
     ["/mh show|hide - Bar an/aus"] = "/mh show|hide - show/hide bar",
@@ -245,10 +236,22 @@ local L_EN = {
     ["/mh analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"] = "/mh analyse start|stop|a|b|compare|boss|death - analyzer functions",
     ["/mh report - letzten/aktuellen Fight-Report ausgeben"] = "/mh report - print the last/current fight report",
     ["/mh autoreport on|off - Report nach Kampf an/aus"] = "/mh autoreport on|off - report after combat on/off",
-    ["/mh molten t9 ITEMNAME - T9-Hose für Glühende Rüstung"] = "/mh molten t9 ITEMNAME - T9 legs for Molten Armor",
-    ["/mh molten main ITEMNAME - normale ICC-Hose für Rückwechsel"] = "/mh molten main ITEMNAME - normal ICC legs to switch back to",
-    ["/mh molten reset - T9-Button wieder auf Schritt 1"] = "/mh molten reset - reset the T9 button to step 1",
     ["/mh lang auto|de|en - Sprache (auto = Client-Sprache)"] = "/mh lang auto|de|en - language (auto = client language)",
+    ["Glühende Rüstung aktiv, mit T9-Bonus."] = "Molten Armor active, with the T9 bonus.",
+    ["Glühende Rüstung aktiv, aber ohne T9-Bonus. Klick zieht T9 an, der nächste Klick erneuert die Rüstung."] = "Molten Armor active, but without the T9 bonus. Click puts T9 on, the next click renews the armor.",
+    ["T9 angelegt: Klick wirkt Glühende Rüstung, danach wechselt deine Ausrüstung zurück."] = "T9 equipped: click casts Molten Armor, then your gear is swapped back.",
+    ["Klick 1 zieht T9-Teile aus den Taschen an, Klick 2 wirkt Glühende Rüstung."] = "Click 1 equips T9 pieces from your bags, click 2 casts Molten Armor.",
+    ["Zu wenig T9-Teile für den Set-Bonus (%d von 2). Klick wirkt Glühende Rüstung ohne Bonus."] = "Not enough T9 pieces for the set bonus (%d of 2). Click casts Molten Armor without the bonus.",
+    ["Klick wirkt Glühende Rüstung."] = "Click casts Molten Armor.",
+    ["Rüstung"] = "Armor",
+    ["Casten"] = "Cast",
+    ["T9 an"] = "T9 on",
+    ["kein T9"] = "no T9",
+    ["MageHelper T9: %d Teile angelegt, in den Taschen: %s"] = "MageHelper T9: %d pieces equipped, in bags: %s",
+    ["keine"] = "none",
+    ["/mh t9 - T9-Teile und Status für Glühende Rüstung anzeigen"] = "/mh t9 - show T9 pieces and Molten Armor status",
+    ["Glühende Rüstung"] = "Molten Armor",
+    ["Mit T9-Set-Bonus wirken (T9 anziehen, danach automatisch zurückwechseln)"] = "Cast with the T9 set bonus (equip T9, then swap back automatically)",
     ["/mh config - Einstellungsfenster öffnen (auch unter Interface > AddOns)"] = "/mh config - open the settings window (also under Interface > AddOns)",
     ["Allgemein"] = "General",
     ["Rota-Leiste anzeigen"] = "Show rotation bar",
@@ -271,10 +274,6 @@ local L_EN = {
     ["Instabilität: Stopcasting ab Stapeln"] = "Instability: stop casting at stacks",
     ["Fokusmagie"] = "Focus Magic",
     ["MF-Partner (Name)"] = "FM partner (name)",
-    ["T9 / Glühende Rüstung"] = "T9 / Molten Armor",
-    ["T9-Hose (Itemname)"] = "T9 legs (item name)",
-    ["Normale Hose (Itemname)"] = "Normal legs (item name)",
-    ["T9-Button auf Schritt 1 setzen"] = "Reset T9 button to step 1",
     ["Analyse"] = "Analyzer",
     ["Fight-Report nach jedem Kampf im Chat"] = "Fight report in chat after every fight",
     ["Debug-Zeile unter der Rota-Leiste"] = "Debug line below the rotation bar",
@@ -293,11 +292,6 @@ local function ApplyLanguageSetting()
     else useEnglish = GetLocale() ~= "deDE" end
 end
 
--- Default T9 / main legs for the Molten Armor button, as item names in the client language.
-local function DefaultLegs()
-    if GetLocale() == "deDE" then return "Khadgars Gamaschen der Eroberung", "Geweihte Gamaschen des Blutmagiers" end
-    return "Khadgar's Leggings of Conquest", "Sanctified Bloodmage Leggings"
-end
 
 -- Item name in the client language when cached, otherwise an item:ID reference for macros.
 local function ItemName(itemId)
@@ -360,7 +354,7 @@ local trackedProcIds = {
 
 local buffChecks = {
     -- Buffbar v2.0: status icons are intentionally red/green, not dimmed, so missing raid/proc buffs are obvious.
-    { key="armor", label="T9 Rüst", iconSpell="Glühende Rüstung", iconSpellId=43046, names={"Glühende Rüstung", "Molten Armor"}, ids={[43046]=true, [30482]=true}, cast="__MOLTEN_T9__", required=true, special="molten" },
+    { key="armor", label="Rüstung", iconSpell="Glühende Rüstung", iconSpellId=43046, names={"Glühende Rüstung", "Molten Armor"}, ids={[43046]=true, [30482]=true}, cast=spells.molten, required=true, special="molten" },
     { key="brilliance", label="Brill", iconSpell="Arkane Brillanz", iconSpellId=43002, names={"Arkane Brillanz", "Arcane Brilliance"}, ids={[43002]=true}, smallNames={"Arkane Intelligenz", "Arcane Intellect"}, smallIds={[42995]=true}, cast=spells.brilliance, required=true, special="brilliance" },
     -- MF IN = nur Status: Habe ICH Fokusmagie bekommen?
     { key="fmin", label="MF IN", iconSpell="Fokusmagie", iconSpellId=54646, names={"Fokusmagie", "Focus Magic"}, ids={[54646]=true}, required=true, special="focus_in" },
@@ -1035,36 +1029,120 @@ local function RefreshOneButtonAfterCombat()
 end
 
 
-local function GetMoltenMacro()
-    local defT9, defMain = DefaultLegs()
-    local t9 = chr.moltenT9Legs or defT9
-    local main = chr.moltenMainLegs or defMain
-    if chr.moltenStep == 2 then
-        return table.concat({
-            "#showtooltip " .. spells.molten,
-            "/equip " .. main,
-        }, "\n")
-    end
-    return table.concat({
-        "#showtooltip " .. spells.molten,
-        "/equip " .. t9,
-        "/cast " .. spells.molten,
-    }, "\n")
+-- =============================
+-- Molten Armor with the T9 2-piece bonus
+-- =============================
+-- The T9 2-piece bonus raises Molten Armor's crit and stays in the buff after swapping back.
+-- Click 1 equips T9 pieces from the bags until 2 are worn, click 2 casts Molten Armor, and after a
+-- successful cast the previous items go back on. T9 is found by item ID only (any language).
+-- Mage T9 IDs 47748-47777 -> inventory slot (1 head, 3 shoulder, 5 chest, 7 legs, 10 hands).
+local T9_SLOT_BY_ID = {
+    [47748] = 1, [47749] = 5, [47750] = 7, [47751] = 3, [47752] = 10, -- Khadgar's ... of Conquest (232)
+    [47753] = 10, [47754] = 1, [47755] = 7, [47756] = 5, [47757] = 3, -- Khadgar's ... of Triumph (245)
+    [47758] = 3, [47759] = 5, [47760] = 7, [47761] = 1, [47762] = 10, -- Khadgar's ... of Triumph (258)
+    [47763] = 10, [47764] = 1, [47765] = 7, [47766] = 5, [47767] = 3, -- Sunstrider's ... of Triumph (258)
+    [47768] = 3, [47769] = 5, [47770] = 7, [47771] = 1, [47772] = 10, -- Sunstrider's ... of Triumph (245)
+    [47773] = 10, [47774] = 1, [47775] = 7, [47776] = 5, [47777] = 3, -- Sunstrider's ... of Conquest (232)
+}
+local T9_SLOT_ORDER = { 7, 10, 3, 1, 5 } -- which slots to swap first: legs, hands, shoulders, head, chest
+local MOLTEN_BUFF_NAMES = { "Glühende Rüstung", "Molten Armor" }
+local MOLTEN_BUFF_IDS = { [43046] = true, [43045] = true, [30482] = true }
+local MOLTEN_DURATION = 1800
+local moltenRestorePending = false
+
+local function ItemIdFromLink(link)
+    return link and tonumber(link:match("item:(%d+)"))
 end
 
-local function RefreshMoltenButton()
-    local btn = buffButtons and buffButtons.armor
-    if not btn then return end
-    if btn.data and btn.data.special == "molten" then
-        btn:SetAttribute("type", "macro")
-        btn:SetAttribute("macrotext", GetMoltenMacro())
-        if chr.moltenStep == 2 then
-            btn.text:SetText(L("Zurück"))
-        else
-            btn.text:SetText(L("T9 Rüst"))
+local function EquippedT9()
+    local count, worn = 0, {}
+    for _, slot in ipairs(T9_SLOT_ORDER) do
+        local id = ItemIdFromLink(GetInventoryItemLink("player", slot))
+        if id and T9_SLOT_BY_ID[id] then count = count + 1; worn[slot] = true end
+    end
+    return count, worn
+end
+
+-- One T9 piece per slot from the bags: [slot] = item link.
+local function BagT9()
+    local found = {}
+    for bag = 0, 4 do
+        for i = 1, GetContainerNumSlots(bag) or 0 do
+            local link = GetContainerItemLink(bag, i)
+            local slot = T9_SLOT_BY_ID[ItemIdFromLink(link) or 0]
+            if slot and not found[slot] then found[slot] = link end
         end
     end
+    return found
 end
+
+-- What a click on the Molten Armor button would do now:
+-- "cast" (2+ T9 worn), "equip" (put T9 on first; picks = pieces to equip), "missing" (fewer than 2 T9 in total).
+local function MoltenPlan()
+    local count, worn = EquippedT9()
+    if count >= 2 then return "cast", count end
+    local bag, picks = BagT9(), {}
+    for _, slot in ipairs(T9_SLOT_ORDER) do
+        if count + #picks < 2 and bag[slot] and not worn[slot] then
+            table.insert(picks, { slot = slot, link = bag[slot] })
+        end
+    end
+    if count + #picks < 2 then return "missing", count + #picks end
+    return "equip", count, picks
+end
+
+local function EquipT9ForMolten(picks)
+    for _, p in ipairs(picks) do
+        -- remember the original item only once, even if the swap is repeated
+        if chr.moltenSwap[p.slot] == nil then chr.moltenSwap[p.slot] = GetInventoryItemLink("player", p.slot) or false end
+        EquipItemByName(p.link, p.slot)
+    end
+end
+
+-- Put the items taken off for the swap back on (armor can't be changed in combat: wait for it to end).
+local function RestoreAfterMolten()
+    if not next(chr.moltenSwap) then return end
+    if InCombatLockdown() then moltenRestorePending = true; return end
+    for slot, link in pairs(chr.moltenSwap) do
+        if link then EquipItemByName(link, slot) end
+    end
+    wipe(chr.moltenSwap)
+    moltenRestorePending = false
+end
+
+-- State of the Molten Armor button: "bonus", "nobonus" (buff up with/without T9 bonus), "ready" (T9 on,
+-- click casts), "equip" (click puts T9 on), "missing" (fewer than 2 T9), "off" (option off, buff missing).
+local moltenStateCache, moltenStateAt = nil, 0
+local function MoltenState()
+    local now = GetTime()
+    if moltenStateCache and now - moltenStateAt < 0.5 then return unpack(moltenStateCache) end
+    local state, extra
+    local active, remain = HasBuff("player", MOLTEN_BUFF_NAMES, MOLTEN_BUFF_IDS)
+    if active then
+        local fresh = chr.moltenCastAt and (time() - chr.moltenCastAt) <= MOLTEN_DURATION + 60
+        state = (chr.moltenBonus and fresh) and "bonus" or "nobonus"
+        extra = remain
+    elseif not cfg.moltenT9 then
+        state = "off"
+    else
+        local plan, n = MoltenPlan()
+        state = (plan == "cast" and "ready") or plan
+        extra = n
+    end
+    moltenStateCache, moltenStateAt = { state, extra }, now
+    return state, extra
+end
+
+local MOLTEN_TIPS = {
+    bonus = "Glühende Rüstung aktiv, mit T9-Bonus.",
+    nobonus = "Glühende Rüstung aktiv, aber ohne T9-Bonus. Klick zieht T9 an, der nächste Klick erneuert die Rüstung.",
+    ready = "T9 angelegt: Klick wirkt Glühende Rüstung, danach wechselt deine Ausrüstung zurück.",
+    equip = "Klick 1 zieht T9-Teile aus den Taschen an, Klick 2 wirkt Glühende Rüstung.",
+    missing = "Zu wenig T9-Teile für den Set-Bonus (%d von 2). Klick wirkt Glühende Rüstung ohne Bonus.",
+    off = "Klick wirkt Glühende Rüstung.",
+}
+local MOLTEN_LABELS = { bonus = "Rüstung", nobonus = "Rüstung", ready = "Casten", equip = "T9 an", missing = "kein T9", off = "Rüstung" }
+
 
 local function EscapeMacroName(name)
     name = tostring(name or "")
@@ -1173,12 +1251,23 @@ local function CreateBuffButton(parent, data)
     btn.timer:SetPoint("CENTER", btn, "CENTER", 0, 0)
     if data.cast then btn:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
     if data.special == "molten" then
-        btn:SetAttribute("type", "macro")
-        btn:SetAttribute("macrotext", GetMoltenMacro())
+        -- Default action casts Molten Armor (also in combat). Out of combat, PreClick may turn this
+        -- click into the T9 swap instead (no cast), and PostClick restores the cast action.
+        btn:SetAttribute("type", "spell")
+        btn:SetAttribute("spell", spells.molten)
         btn:RegisterForClicks("LeftButtonUp")
-        btn:SetScript("PostClick", function()
-            chr.moltenStep = (chr.moltenStep == 2) and 1 or 2
-            RefreshMoltenButton()
+        btn:SetScript("PreClick", function(self)
+            if InCombatLockdown() or not cfg.moltenT9 then return end
+            local plan, _, picks = MoltenPlan()
+            if plan == "equip" then
+                self:SetAttribute("type", nil)
+                EquipT9ForMolten(picks)
+                moltenStateCache = nil
+            end
+        end)
+        btn:SetScript("PostClick", function(self)
+            if not InCombatLockdown() then self:SetAttribute("type", "spell") end
+            moltenStateCache = nil
         end)
     elseif data.special == "focus_out" then
         btn:SetAttribute("type", "macro")
@@ -1198,13 +1287,8 @@ local function CreateBuffButton(parent, data)
         local buffName = (self.data.iconSpellId and GetSpellInfo(self.data.iconSpellId)) or self.data.names[useEnglish and 2 or 1]
         GameTooltip:AddLine(buffName or "", 1,1,1, true)
         if self.data.special == "molten" then
-            if chr.moltenStep == 2 then
-                GameTooltip:AddLine(L("Klick: Main-Hose wieder anziehen"), 0.7,0.9,1)
-                GameTooltip:AddLine(chr.moltenMainLegs or L("Main-Hose nicht gesetzt"), 1,1,1, true)
-            else
-                GameTooltip:AddLine(string.format(L("Klick: T9-Hose anziehen + %s buffen"), spells.molten), 0.7,0.9,1, true)
-                GameTooltip:AddLine(chr.moltenT9Legs or L("T9-Hose nicht gesetzt"), 1,1,1, true)
-            end
+            local state, extra = MoltenState()
+            GameTooltip:AddLine(string.format(L(MOLTEN_TIPS[state]), extra or 0), 0.7,0.9,1, true)
         elseif self.data.special == "focus_out" then
             local target = chr.focusMagicTarget or ""
             if target ~= "" then GameTooltip:AddLine(string.format(L("Klick: Fokusmagie auf %s und danach zurück aufs letzte Ziel"), target), 0.7,0.9,1, true)
@@ -1557,7 +1641,6 @@ local function CreateBuffBar()
     buffBar.fmTargetText:SetWidth(480)
     buffBar.fmTargetText:SetJustifyH("LEFT")
 
-    RefreshMoltenButton()
     RefreshFocusMagicButton()
     RefreshFocusMagicLabel()
     if not cfg.buffBarShown then buffBar:Hide() end
@@ -2088,6 +2171,16 @@ local function FormatRemain(remain)
     return string.format("%.0f", remain)
 end
 
+-- Molten Armor button colors: r, g, b, pulse
+local MOLTEN_COLORS = {
+    bonus = { 0.10, 1.00, 0.10 },          -- green: buff with T9 bonus
+    nobonus = { 1.00, 0.85, 0.05 },        -- yellow: buff without bonus
+    ready = { 1.00, 0.50, 0.00, true },    -- orange, pulsing: T9 on, click casts
+    equip = { 0.15, 0.55, 1.00 },          -- blue: click puts T9 on
+    missing = { 0.55, 0.55, 0.55 },        -- grey: fewer than 2 T9 pieces
+    off = { 1.00, 0.05, 0.05 },            -- red: buff missing (swap option off)
+}
+
 local function UpdateBuffBar()
     if not buffBar or not buffBar:IsShown() then return end
     for _, data in ipairs(buffChecks) do
@@ -2101,14 +2194,27 @@ local function UpdateBuffBar()
                 if small then active = true; remain = smallRemain; warnSmall = true; displayName = smallFound end
             elseif data.special == "focus_out" then
                 active, remain, displayName = FindMyFocusMagicOut()
-            elseif data.special == "molten" and active and chr.moltenStep ~= 2 then
-                -- Buff is active: next click should be the safe return to main legs.
-                chr.moltenStep = 2
-                RefreshMoltenButton()
             end
 
-            btn.timer:SetText(active and (warnSmall and "AI" or FormatRemain(remain)) or "!")
-            if active and not warnSmall then
+            local moltenColor
+            if data.special == "molten" then
+                local state, extra = MoltenState()
+                btn.text:SetText(L(MOLTEN_LABELS[state]))
+                if state == "missing" then btn.timer:SetText(string.format("%d/2", extra or 0))
+                elseif state == "bonus" or state == "nobonus" then btn.timer:SetText(FormatRemain(extra))
+                else btn.timer:SetText("") end
+                moltenColor = MOLTEN_COLORS[state]
+            else
+                btn.timer:SetText(active and (warnSmall and "AI" or FormatRemain(remain)) or "!")
+            end
+            if moltenColor then
+                local r, g, b, pulse = unpack(moltenColor)
+                local a = pulse and (0.25 + 0.25 * math.abs(math.sin(GetTime() * 5))) or 0.34
+                btn:SetAlpha(1)
+                btn.shade:SetVertexColor(0, 0, 0, 0.15)
+                btn.status:SetVertexColor(r, g, b, a)
+                btn.border:Show(); btn.border:SetVertexColor(r, g, b, 0.95)
+            elseif active and not warnSmall then
                 btn:SetAlpha(1)
                 btn.shade:SetVertexColor(0,0,0,0.05)
                 btn.status:SetVertexColor(0.05, 0.95, 0.05, 0.28)
@@ -2288,6 +2394,7 @@ end
 
 function KR:PLAYER_REGEN_ENABLED()
     RefreshOneButtonAfterCombat()
+    if moltenRestorePending then RestoreAfterMolten() end
     if fmPendingAfterCombat then
         RefreshFocusMagicButton()
         RefreshFocusMagicLabel()
@@ -2355,6 +2462,12 @@ function KR:UNIT_SPELLCAST_SUCCEEDED(unit, spell)
         StartBurstQueue(L("Spiegelbilder/Burst-CDs vor Feuerball"))
     elseif spell == spells.mirror then
         ClearBurstQueue()
+    elseif spell == spells.molten then
+        -- the bonus is decided by what is worn when the cast lands; then swap back
+        chr.moltenBonus = EquippedT9() >= 2
+        chr.moltenCastAt = time()
+        moltenStateCache = nil
+        RestoreAfterMolten()
     end
 end
 
@@ -2481,28 +2594,13 @@ local function HandleSlash(msg)
         else
             SetFocusMagicTarget(arg, true)
         end
-    elseif cmd == "molten" then
-        local sub, rest = arg:match("^(%S*)%s*(.-)$")
-        sub = string.lower(sub or "")
-        if sub == "t9" and rest and rest ~= "" then
-            chr.moltenT9Legs = rest
-            chr.moltenStep = 1
-            RefreshMoltenButton()
-            print(string.format(L("MageHelper: T9-Hose gesetzt: %s"), rest))
-        elseif sub == "main" and rest and rest ~= "" then
-            chr.moltenMainLegs = rest
-            RefreshMoltenButton()
-            print(string.format(L("MageHelper: Main-Hose gesetzt: %s"), rest))
-        elseif sub == "reset" then
-            chr.moltenStep = 1
-            RefreshMoltenButton()
-            print(L("MageHelper: Molten-Armor-Schritt zurückgesetzt"))
-        else
-            print("MageHelper Molten/T9:")
-            print("/mh molten t9 " .. (DefaultLegs()))
-            print("/mh molten main " .. select(2, DefaultLegs()))
-            print("/mh molten reset")
-        end
+    elseif cmd == "t9" or cmd == "molten" then
+        local count = EquippedT9()
+        local links = {}
+        for _, link in pairs(BagT9()) do table.insert(links, link) end
+        print(string.format(L("MageHelper T9: %d Teile angelegt, in den Taschen: %s"), count, #links > 0 and table.concat(links, " ") or L("keine")))
+        local state, extra = MoltenState()
+        print(string.format(L(MOLTEN_TIPS[state]), extra or 0))
     elseif cmd == "config" or cmd == "options" or cmd == "optionen" then
         MH:OpenOptions()
     elseif cmd == "lang" or cmd == "sprache" then
@@ -2538,9 +2636,7 @@ local function HandleSlash(msg)
         print(L("/mh analyse start|stop|a|b|compare|boss|death - Analyzer-Funktionen"))
         print(L("/mh report - letzten/aktuellen Fight-Report ausgeben"))
         print(L("/mh autoreport on|off - Report nach Kampf an/aus"))
-        print(L("/mh molten t9 ITEMNAME - T9-Hose für Glühende Rüstung"))
-        print(L("/mh molten main ITEMNAME - normale ICC-Hose für Rückwechsel"))
-        print(L("/mh molten reset - T9-Button wieder auf Schritt 1"))
+        print(L("/mh t9 - T9-Teile und Status für Glühende Rüstung anzeigen"))
         print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
     end
 end
@@ -2627,15 +2723,15 @@ local function SetupOptions(db)
                     get = function() return chr.focusMagicPartner end,
                     set = function(_, v) SetFocusMagicTarget(strtrim(v or ""), true) end },
             } },
-            molten = { type = "group", name = L("T9 / Glühende Rüstung"), order = 5, args = {
-                moltenT9Legs = { type = "input", name = L("T9-Hose (Itemname)"), order = 1, width = "full",
-                    get = function() return chr.moltenT9Legs end,
-                    set = function(_, v) if inCombat() then return end; chr.moltenT9Legs = v; chr.moltenStep = 1; RefreshMoltenButton() end },
-                moltenMainLegs = { type = "input", name = L("Normale Hose (Itemname)"), order = 2, width = "full",
-                    get = function() return chr.moltenMainLegs end,
-                    set = function(_, v) if inCombat() then return end; chr.moltenMainLegs = v; RefreshMoltenButton() end },
-                reset = { type = "execute", name = L("T9-Button auf Schritt 1 setzen"), order = 3,
-                    func = function() if inCombat() then return end; chr.moltenStep = 1; RefreshMoltenButton() end },
+            molten = { type = "group", name = L("Glühende Rüstung"), order = 5, args = {
+                moltenT9 = { type = "toggle", order = 1, width = "full",
+                    name = L("Mit T9-Set-Bonus wirken (T9 anziehen, danach automatisch zurückwechseln)"),
+                    get = function() return cfg.moltenT9 end,
+                    set = function(_, v) cfg.moltenT9 = v; moltenStateCache = nil end },
+                status = { type = "description", order = 2, fontSize = "medium", name = function()
+                    local state, extra = MoltenState()
+                    return string.format(L(MOLTEN_TIPS[state]), extra or 0)
+                end },
             } },
             analyzer = { type = "group", name = L("Analyse"), order = 6, get = get, set = set, args = {
                 reportOnFightEnd = toggle(L("Fight-Report nach jedem Kampf im Chat"), 1),
@@ -2688,9 +2784,6 @@ function MH:OnInitialize()
     ApplyLegacySettings(self.db, legacy)
     cfg, chr = self.db.profile, self.db.char
     ApplyLanguageSetting()
-    local defT9, defMain = DefaultLegs()
-    if chr.moltenT9Legs == nil then chr.moltenT9Legs = defT9 end
-    if chr.moltenMainLegs == nil then chr.moltenMainLegs = defMain end
     self.db.RegisterCallback(self, "OnProfileChanged", "ApplyProfile")
     self.db.RegisterCallback(self, "OnProfileCopied", "ApplyProfile")
     self.db.RegisterCallback(self, "OnProfileReset", "ApplyProfile")

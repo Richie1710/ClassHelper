@@ -140,6 +140,28 @@ function GetTalentTabInfo(tab, inspect)
   return "Tab" .. tab, "icon", t[tab] or 0
 end
 
+-- equipment and bags: EQUIPPED[slot] = item link, BAGS[bag][i] = item link
+EQUIPPED, BAGS = {}, { [0] = {} }
+function time() return math.floor(now) end
+function GetInventoryItemLink(unit, slot) if unit == "player" then return EQUIPPED[slot] end end
+function GetContainerNumSlots(bag) return BAGS[bag] and 16 or 0 end
+function GetContainerItemLink(bag, i) return BAGS[bag] and BAGS[bag][i] end
+local function itemId(link) return link and tonumber(tostring(link):match("item:(%d+)")) end
+-- like the client: the item from the bags goes into the slot, the worn item takes its bag place
+function EquipItemByName(item, slot)
+  if INCOMBAT then error("EquipItemByName: armor can't be swapped in combat") end
+  local want = itemId(item)
+  for bag, items in pairs(BAGS) do
+    for i = 1, 16 do
+      if items[i] and itemId(items[i]) == want then
+        items[i], EQUIPPED[slot] = EQUIPPED[slot], items[i]
+        EQUIP_COUNT = (EQUIP_COUNT or 0) + 1
+        return
+      end
+    end
+  end
+end
+
 -- FrameXML helpers used by the picker
 function FauxScrollFrame_Update(f, total) f.__total = total end
 function FauxScrollFrame_GetOffset(f) return f.__offset or 0 end
