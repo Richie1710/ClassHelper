@@ -794,6 +794,147 @@ PLAYER_TALENTS, DEBUFFS.player = nil, {}
 OUT[#OUT + 1] = "ARCANE OK"
 '''
 
+# Spellsteal: worth list by ID, isStealable decides, range, focus hint, setting, cache, indicator,
+# Fire and Arcane, emergencies first, nothing protected changes in combat.
+SPELLSTEAL = r'''
+local KR = MageHelperFrame
+local de = GetLocale() == "deDE"
+local function upd(n) for i = 1, (n or 2) do Tick(0.15) end end
+local function reco() return FRAMES.MageHelperOneButton.currentKey end
+local function st(k) return FRAMES["MageHelperButton_" .. k].state end
+local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
+local function info() return KR.info.__text end
+local IND = FRAMES.MageHelperStealIndicator
+local STEAL = GetSpellInfo(30449)
+local NP = de and "Netherkraft" or "Nether Power"
+local VM = de and "Vampirmacht" or "Vampiric Might"
+local OTHER = de and "Irgendein Buff" or "Some buff"
+-- aura with an explicit expiry: { name, count, expires, spellId, caster, isStealable }
+local function aura(name, id, stealable, count) return { name, count or 0, GetTime() + 600, id, nil, stealable and 1 or nil } end
+local function setTarget(list) AURAS.target = list; FireEvent("UNIT_AURA", "target") end
+local errors = #ERRORS
+
+INCOMBAT, MOVING, NOTARGET, TARGETNAME, FOCUS, TARGET_HP = false, false, nil, "Lord Jaraxxus", nil, 100
+AURAS.player, DEBUFFS.player, COOLDOWNS, ITEM_COOLDOWNS, BOSSES = {}, {}, {}, {}, {}
+check(MH.db.profile.spellsteal == true and MH.db.profile.spellstealAll == false, "Spellsteal defaults: on, worth list only")
+Slash("rota feuer"); upd()
+local m = FRAMES.MageHelperButton_steal.__attr.macrotext
+check(m:find("/cast [@mouseover,harm,nodead][] " .. STEAL, 1, true) and m:find("#showtooltip " .. STEAL, 1, true), "Spellsteal macro: " .. m)
+check(shown("steal") and shown("lb") and KR.__w == 8 + 10 * 53 + 95, "Fire set has the steal button, bar width " .. tostring(KR.__w))
+check(not IND.__shown, "indicator hidden without stealable buffs")
+
+-- Fire: listed stealable buff on the target -> urgent Spellsteal, above Hot Streak
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
+setTarget({ aura(OTHER, 12345, true), aura(NP, 67108, true, 2) }); upd()
+check(reco() == "steal" and st("steal") == "urgent", "Fire: listed buff -> urgent steal (" .. tostring(reco()) .. ", " .. tostring(st("steal")) .. ")")
+check(info():find(NP, 1, true), "info line names the buff: " .. info())
+AURAS.player = { { "Hot Streak", 0, nil, 48108 } }; upd()
+check(reco() == "steal", "Spellsteal before Hot Streak"); AURAS.player = {}
+check(IND.__shown and IND.icon.__tex == "aura67108" and IND.count.__text == "2" and IND.worth and IND.timer.__text ~= "", "indicator: worth buff first, icon, stacks, time")
+check(IND.border.__vc[1] == 1 and IND.border.__vc[4] == 1, "indicator: strong border for the worth list")
+local mark = #OUT
+IND.__scripts.OnEnter(IND)
+local tip = table.concat(OUT, "\n", mark + 1)
+check(tip:find(NP, 1, true) and tip:find(OTHER, 1, true), "tooltip lists every stealable buff: " .. tip)
+OUT[#OUT + 1] = "STEAL TIP " .. tip:gsub("\n", " | ")
+
+-- emergencies still win
+AURAS.player = { { GetSpellInfo(45438), 0, nil, 45438 } }; upd()
+check(reco() == "ice", "Ice Block cancel beats Spellsteal (" .. tostring(reco()) .. ")"); AURAS.player = {}
+upd(); check(reco() == "steal", "steal again after the emergency")
+
+-- out of range: no recommendation, blue button, note in the info line
+RANGE.target = 0; upd()
+check(reco() ~= "steal" and st("steal") == "prep", "out of range: rotation goes on, steal button blue (" .. tostring(reco()) .. ", " .. tostring(st("steal")) .. ")")
+check(info():find(de and "außer Reichweite" or "out of range", 1, true), "out of range note: " .. info())
+OUT[#OUT + 1] = "STEAL INFO " .. info()
+RANGE.target = nil
+-- not usable (e.g. no mana): no recommendation
+USABLE[STEAL] = false; upd(); check(reco() ~= "steal", "not usable: no recommendation"); USABLE[STEAL] = nil
+
+-- listed but not stealable (isStealable nil): nothing
+setTarget({ aura(NP, 67108, false) }); upd()
+check(reco() ~= "steal" and not IND.__shown and st("steal") == "normal", "listed buff without isStealable: nothing")
+
+-- unlisted stealable buff: indicator (weak border) but only recommended with spellstealAll
+setTarget({ aura(OTHER, 12345, true) }); upd()
+check(reco() ~= "steal" and IND.__shown and not IND.worth and IND.border.__vc[4] < 1, "unlisted stealable: indicator only")
+Slash("raub alle"); upd()
+check(MH.db.profile.spellstealAll and reco() == "steal" and st("steal") == "glow", "/mh raub alle: unlisted -> steal, not urgent (" .. tostring(st("steal")) .. ")")
+Slash("steal worth"); upd()
+check(not MH.db.profile.spellstealAll and reco() ~= "steal", "/mh steal worth: unlisted ignored again")
+
+-- the cache: no scan per update, rescan on UNIT_AURA / target change only
+local calls = AURA_CALLS
+upd(10)
+check(AURA_CALLS == calls, "no aura scan on display updates")
+AURAS.target = { aura(NP, 66228, true) }; upd()
+check(reco() ~= "steal", "cache unchanged without an event")
+FireEvent("UNIT_AURA", "raid3"); check(AURA_CALLS == calls, "UNIT_AURA of other units ignored")
+FireEvent("UNIT_AURA", "target"); upd()
+check(reco() == "steal" and AURA_CALLS > calls, "UNIT_AURA on the target rescans")
+AURAS.target = {}; TARGETNAME = "Add"; FireEvent("PLAYER_TARGET_CHANGED"); upd()
+check(reco() ~= "steal" and not IND.__shown, "target change rescans (buff gone, indicator hidden)")
+TARGET_FRIENDLY = true; AURAS.target = { aura(NP, 66228, true) }; FireEvent("PLAYER_TARGET_CHANGED"); upd()
+check(reco() ~= "steal" and not IND.__shown, "friendly target is not scanned")
+TARGET_FRIENDLY = nil; AURAS.target = {}; FireEvent("PLAYER_TARGET_CHANGED")
+-- expired buff in the cache is ignored
+AURAS.target = { { NP, 0, GetTime() + 1, 66228, nil, 1 } }; FireEvent("UNIT_AURA", "target"); upd(10)
+check(reco() ~= "steal" and not IND.__shown, "expired cached buff ignored")
+AURAS.target = {}; FireEvent("UNIT_AURA", "target")
+
+-- focus only: hint in the info line, no recommendation
+FOCUS = { name = "Cult Fanatic" }; AURAS.focus = { aura(VM, 70674, true) }; FireEvent("PLAYER_FOCUS_CHANGED"); upd()
+check(reco() ~= "steal" and info():find(VM, 1, true) and info():find(de and "Fokus" or "Focus", 1, true), "focus only: hint (" .. info() .. ")")
+OUT[#OUT + 1] = "STEAL FOCUS " .. info()
+mark = #OUT; IND.__scripts.OnEnter(IND)
+check(table.concat(OUT, "\n", mark + 1):find(VM, 1, true), "tooltip lists the focus buff")
+-- target and focus both: the target wins
+setTarget({ aura(NP, 66228, true) }); upd()
+check(reco() == "steal" and info():find(NP, 1, true), "target buff before the focus hint")
+setTarget({})
+FOCUS = nil; AURAS.focus = nil; FireEvent("PLAYER_FOCUS_CHANGED"); upd()
+check(not info():find(VM, 1, true), "focus cleared: hint gone")
+
+-- feature off: nothing at all
+Slash("raub aus")
+setTarget({ aura(NP, 66228, true) }); upd()
+check(not MH.db.profile.spellsteal and reco() ~= "steal" and not IND.__shown and st("steal") == "normal", "/mh raub aus: nothing")
+RANGE.target = 0; upd(); check(st("steal") == "normal" and not info():find(NP, 1, true), "off: no out-of-range hint either"); RANGE.target = nil
+Slash("steal on"); upd()
+check(MH.db.profile.spellsteal and reco() == "steal", "/mh steal on: rescans at once")
+
+-- Arcane: same hook (switch out of combat), emergencies first
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")
+Slash("rota arkan"); upd()
+check(shown("steal") and shown("ab") and KR.__w == 8 + 13 * 53 + 95, "Arcane set has the steal button, bar width " .. tostring(KR.__w))
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
+for _, n in ipairs({ GetSpellInfo(12042), GetSpellInfo(12043), GetSpellInfo(55342), GetSpellInfo(12472), GetSpellInfo(12051) }) do COOLDOWNS[n] = 100 end
+upd()
+check(reco() == "steal" and st("steal") == "urgent", "Arcane: listed buff -> urgent steal (" .. tostring(reco()) .. ")")
+AURAS.player = { { GetSpellInfo(45438), 0, nil, 45438 } }; upd()
+check(reco() == "ice", "Arcane: emergency beats Spellsteal"); AURAS.player = {}
+RANGE.target = 0; upd()
+check(reco() ~= "steal" and st("steal") == "prep", "Arcane: out of range -> prep, Arcane goes on (" .. tostring(reco()) .. ")")
+RANGE.target = nil
+setTarget({}); upd(); check(reco() ~= "steal", "Arcane: buff gone")
+
+-- options
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local g = o.args.spellsteal
+check(g and g.args.spellsteal and g.args.spellstealAll and g.args.help, "options group Spellsteal")
+g.set({ "spellsteal", "spellstealAll" }, true); check(MH.db.profile.spellstealAll == true, "spellstealAll via options")
+g.set({ "spellsteal", "spellstealAll" }, false)
+g.set({ "spellsteal", "spellsteal" }, false); check(MH.db.profile.spellsteal == false, "spellsteal off via options")
+g.set({ "spellsteal", "spellsteal" }, true)
+Slash("raub"); Slash("help")
+
+check(#ERRORS == errors, "no Lua errors (protected frames untouched in combat)")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); COOLDOWNS = {}
+Slash("rota auto")
+OUT[#OUT + 1] = "SPELLSTEAL OK"
+'''
+
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
 
 version, files = toc_files()
@@ -814,14 +955,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE)):
+        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)

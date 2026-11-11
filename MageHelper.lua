@@ -27,6 +27,8 @@ local defaults = {
         rotationMode = "auto",    -- "auto" (talent tree with most points), "fire" or "arcane"
         arcaneBurnMode = "auto",  -- "auto" (time to die vs. time to OOM, like SimC) or "mana" (threshold only)
         arcaneBurnMana = 35,      -- burn while mana % >= this (mana mode, and auto while the estimate is unreliable)
+        spellsteal = true,        -- Spellsteal hint, button glow and target buff indicator
+        spellstealAll = false,    -- also recommend stealable buffs that are not on M.STEAL_WORTH (not urgent)
         showMovementFireBlast = true,
         useGloves = true,
         buffBarShown = true,
@@ -354,6 +356,23 @@ local L_EN = {
     ["zu wenig Daten"] = "too little data",
     ["Ziel verliert kein Leben"] = "target not losing health",
     ["kein Ziel"] = "no target",
+    -- Spellsteal
+    ["Raub"] = "Steal",
+    ["ZAUBERRAUB: %s"] = "SPELLSTEAL: %s",
+    ["Stehlbar: %s"] = "Stealable: %s",
+    ["%s: %s - außer Reichweite (30 m)"] = "%s: %s - out of range (30 yd)",
+    ["Fokus: %s stehlen (Mouseover oder Ziel)"] = "Focus: steal %s (mouseover or target)",
+    ["Stehlbare Buffs"] = "Stealable buffs",
+    ["Fokus"] = "Focus",
+    ["Orange = lohnend (Liste), grau = stehlbar"] = "Orange = worth stealing (list), grey = stealable",
+    ["Zauberraub"] = "Spellsteal",
+    ["Zauberraub empfehlen"] = "Recommend Spellsteal",
+    ["Auch nicht gelistete stehlbare Buffs empfehlen (nicht dringend)"] = "Also recommend unlisted stealable buffs (not urgent)",
+    ["Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt auf Mouseover, sonst aufs Ziel. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels."] = "When your target has a stealable buff from the list of buffs worth stealing (e.g. Lord Jaraxxus, Lady Deathwhisper, the Faction Champions, the Argent Confessor and Sjonnir), the Steal button glows red, after the emergencies (Ice Block, Counterspell) and before damage. Spellsteal has a 30 yd range and costs a global cooldown; out of range the button turns blue. When only your focus has such a buff, the info line shows a hint; the button casts on your mouseover, otherwise on your target. The icon above the bar shows the target's first stealable buff.",
+    ["MageHelper: Zauberraub AUS"] = "MageHelper: Spellsteal OFF",
+    ["MageHelper: Zauberraub AN (nur lohnende Buffs)"] = "MageHelper: Spellsteal ON (only buffs worth stealing)",
+    ["MageHelper: Zauberraub AN (alle stehlbaren Buffs)"] = "MageHelper: Spellsteal ON (all stealable buffs)",
+    ["/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"] = "/mh steal on|off|all|worth - Spellsteal hint (all = also unlisted buffs)",
 }
 local useEnglish = GetLocale() ~= "deDE"
 local function L(s)
@@ -408,6 +427,7 @@ local spells = {
     iv = SpellName(12472, "Eisige Adern"),
     evo = SpellName(12051, "Hervorrufung"),
     mb = SpellName(44401, "Geschosssalve"),
+    steal = SpellName(30449, "Zauberraub"),
 }
 
 -- Spell IDs of every rank the player may cast, for the combat log (3.3.5 passes the spellId).
@@ -2063,7 +2083,11 @@ local function CreateUI()
         "#showtooltip " .. ItemName(M.MANA_GEM_ITEM) .. "\n/use " .. ItemName(M.MANA_GEM_ITEM))
     gem.spellName, gem.itemId = nil, M.MANA_GEM_ITEM
     gem.icon:SetTexture((GetItemIcon and GetItemIcon(M.MANA_GEM_ITEM)) or "Interface\\Icons\\INV_Misc_Gem_Stone_01")
+    -- Spellsteal, in every rotation's set: on a hostile mouseover, otherwise on the target.
+    CreateSpellButton(KR, "steal", L("Raub"), spells.steal,
+        "#showtooltip " .. spells.steal .. "\n/cast [@mouseover,harm,nodead][] " .. spells.steal)
     M.LayoutRota(M.DesiredRota())
+    M.CreateStealIndicator()
 
     local ob = CreateOneButton(KR)
     ob:SetPoint("TOPRIGHT", KR, "TOPRIGHT", -10, -18)
@@ -2549,6 +2573,8 @@ local function MarkRecommended(key, urgent)
         end
         UpdateOneButton(key, urgent)
     end
+    -- Spellsteal out of range (M.SpellstealReco): blue, while the rotation keeps its own recommendation.
+    if M.stealPrep and key ~= "steal" and buttons.steal then ButtonSetState(buttons.steal, "prep", 0.80) end
     UpdateButtonCooldownVisuals()
 end
 
@@ -2682,6 +2708,153 @@ function M.EmergencyReco(filler, moveKey, utilType, utilNote, utilReady, utilCD)
 end
 
 -- =============================
+-- Spellsteal helper
+-- =============================
+-- Spellsteal (30449; 30 yd, on the global cooldown) takes one stealable magic buff from a hostile
+-- unit. Whether a buff can be stolen is decided only at runtime by UnitAura's 9th return
+-- (isStealable: 1 or nil in 3.3.5); M.STEAL_WORTH only marks the buffs worth the GCD. IDs checked
+-- against wotlkdb.com (3.3.5a spell data) and the 3.3.5 DBM boss mods (Zidras/DBM-Warmane); variants
+-- that could not be verified are left out (e.g. heroic Earth Shield, Vampiric Might has only one ID).
+M.STEAL_ID = 30449
+M.STEAL_WORTH = {
+    [66228] = true, [67106] = true, [67107] = true, [67108] = true, -- Lord Jaraxxus: Nether Power (10/25, normal/heroic)
+    [70674] = true,                                                 -- Lady Deathwhisper, Cult Fanatic: Vampiric Might
+    [70768] = true,                                                 -- Lady Deathwhisper, Cult Adherent: Shroud of the Occult
+    [65983] = true, [65980] = true,                                 -- Faction Champions: Heroism, Bloodlust
+    [66063] = true,                                                 -- Faction Champions: Earth Shield
+    [66115] = true, [68756] = true, [68757] = true, [68758] = true, -- Faction Champions: Hand of Freedom (10/25, n/h)
+    [66537] = true, [67675] = true,                                 -- Trial of the Champion, Paletress: Renew (normal/heroic)
+    [50831] = true, [59845] = true,                                 -- Halls of Stone, Sjonnir: Lightning Shield (normal/heroic)
+}
+-- Cached stealable buffs per unit, worth-list first: { name, icon, count, expires, id, worth, slot }.
+-- Rescanned only on UNIT_AURA (target/focus), PLAYER_TARGET_CHANGED and PLAYER_FOCUS_CHANGED.
+M.steal = { target = {}, focus = {} }
+M.STEAL_UNITS = { "target", "focus" }
+
+function M.ScanSteal(unit)
+    local list = {}
+    if cfg and cfg.spellsteal and UnitExists(unit) and UnitCanAttack("player", unit) and not UnitIsDead(unit) then
+        for i = 1, 40 do
+            local name, _, icon, count, _, _, expires, _, stealable, _, spellId = UnitAura(unit, i, "HELPFUL")
+            if not name then break end
+            if stealable then
+                list[#list + 1] = { name = name, icon = icon, count = count or 0, expires = expires or 0,
+                    id = spellId, worth = M.STEAL_WORTH[spellId or 0] == true, slot = i }
+            end
+        end
+        table.sort(list, function(a, b) if a.worth ~= b.worth then return a.worth end return a.slot < b.slot end)
+    end
+    M.steal[unit] = list
+end
+
+function M.RescanSteal() for _, unit in ipairs(M.STEAL_UNITS) do M.ScanSteal(unit) end end
+
+-- First cached stealable buff of the unit that is still running (worth list first), or nil.
+function M.StealFirst(unit, now)
+    for _, a in ipairs(M.steal[unit] or {}) do
+        if a.expires == 0 or a.expires > now then return a end
+    end
+end
+
+-- Shared by every rotation, called right after the emergencies and before the DPS priority.
+-- A new rotation (e.g. Frost) hooks in like Fire and Arcane do:
+--     local reco, urgent, note = M.EmergencyReco(filler, moveKey, utilType, utilNote, utilReady, utilCD)
+--     if not reco then reco, urgent, note = M.SpellstealReco() end
+--     if not reco then ... the rotation's DPS priority ... end
+--     MarkRecommended(reco, urgent)                              -- also paints "steal" blue (M.stealPrep)
+--     KR.info:SetText(... (note or "") .. M.StealInfoText() ...) -- out-of-range / focus hint
+-- and puts "steal" into its button set in M.ROTA_SETS. UpdateDisplay clears M.stealHint/M.stealPrep
+-- before the rotation runs. Returns "steal", urgent, note when Spellsteal should be cast now:
+-- a worth-list buff on the target -> urgent; any other stealable buff only with cfg.spellstealAll,
+-- not urgent. Out of range: no recommendation, the button turns blue and the info line says why.
+-- Only the focus has a worth-list buff: info line hint, no recommendation.
+function M.SpellstealReco()
+    if not cfg.spellsteal or not buttons.steal or not M.KnowsSpell(M.STEAL_ID) then return nil end
+    local now = GetTime()
+    local a = M.StealFirst("target", now)
+    if a and (a.worth or cfg.spellstealAll) then
+        if IsSpellInRange(spells.steal, "target") == 0 then
+            M.stealPrep = true
+            M.stealHint = string.format(L("%s: %s - außer Reichweite (30 m)"), spells.steal, a.name)
+            return nil
+        end
+        if IsUsableSpell and not IsUsableSpell(spells.steal) then return nil end -- e.g. no mana
+        if a.worth then return "steal", true, string.format(L("ZAUBERRAUB: %s"), a.name) end
+        return "steal", false, string.format(L("Stehlbar: %s"), a.name)
+    end
+    if not UnitIsUnit("focus", "target") then
+        local f = M.StealFirst("focus", now)
+        if f and f.worth then M.stealHint = string.format(L("Fokus: %s stehlen (Mouseover oder Ziel)"), f.name) end
+    end
+    return nil
+end
+
+function M.StealInfoText() return M.stealHint and ("  |cff66ccff" .. M.stealHint .. "|r") or "" end
+
+-- Indicator above the rotation bar: the target's first stealable buff (icon, stacks, time left),
+-- orange border when it is on the worth list. Not secure, so it may change in combat.
+function M.CreateStealIndicator()
+    local f = CreateFrame("Frame", "MageHelperStealIndicator", KR)
+    f:SetWidth(30); f:SetHeight(30)
+    f:SetPoint("BOTTOMLEFT", KR, "TOPLEFT", 8, 4)
+    f:EnableMouse(true)
+    f.icon = f:CreateTexture(nil, "ARTWORK")
+    f.icon:SetAllPoints(f)
+    f.border = f:CreateTexture(nil, "OVERLAY")
+    f.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+    f.border:SetBlendMode("ADD")
+    f.border:SetWidth(54); f.border:SetHeight(54)
+    f.border:SetPoint("CENTER")
+    f.count = f:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    f.count:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -1, 1)
+    f.timer = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    f.timer:SetPoint("LEFT", f, "RIGHT", 4, 0)
+    f:SetScript("OnEnter", M.StealTooltip)
+    f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    f:Hide()
+    M.stealIndicator = f
+end
+
+function M.UpdateStealIndicator(now)
+    local f = M.stealIndicator
+    if not f then return end
+    local a = cfg.spellsteal and M.StealFirst("target", now)
+    if not a then
+        if f:IsShown() then f:Hide() end
+        return
+    end
+    f.icon:SetTexture(a.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    f.count:SetText(a.count > 1 and tostring(a.count) or "")
+    f.timer:SetText(a.expires > 0 and FormatRemain(a.expires - now) or "")
+    if a.worth then f.border:SetVertexColor(1.00, 0.50, 0.00, 1.00) else f.border:SetVertexColor(0.60, 0.60, 0.60, 0.50) end
+    f.worth, f.spellId = a.worth, a.id
+    if not f:IsShown() then f:Show() end
+end
+
+function M.StealTooltip(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText(L("Stehlbare Buffs"))
+    local now = GetTime()
+    for _, unit in ipairs(M.STEAL_UNITS) do
+        local label = unit == "target" and L("Ziel") or L("Fokus")
+        for _, a in ipairs(M.steal[unit]) do
+            if a.expires == 0 or a.expires > now then
+                local text = label .. ": " .. a.name .. (a.count > 1 and (" x" .. a.count) or "")
+                    .. (a.expires > 0 and (" (" .. FormatRemain(a.expires - now) .. ")") or "")
+                if a.worth then GameTooltip:AddLine(text, 1, 0.5, 0) else GameTooltip:AddLine(text, 0.8, 0.8, 0.8) end
+            end
+        end
+    end
+    GameTooltip:AddLine(L("Orange = lohnend (Liste), grau = stehlbar"), 0.6, 0.6, 0.6, true)
+    GameTooltip:Show()
+end
+
+function M.StealModeText()
+    if not cfg.spellsteal then return L("MageHelper: Zauberraub AUS") end
+    return cfg.spellstealAll and L("MageHelper: Zauberraub AN (alle stehlbaren Buffs)") or L("MageHelper: Zauberraub AN (nur lohnende Buffs)")
+end
+
+-- =============================
 -- Arcane rotation
 -- =============================
 -- IDs checked on Wowhead WotLK: Arcane Blast 42897 (rank 4, 7% base mana, 2.5 s) and its stacking
@@ -2742,8 +2915,8 @@ M.BURN_EVAL = 1.0             -- burn/conserve is re-decided once per second ...
 M.BURN_HYST = 0.10            -- ... and in auto mode only flips with a 10% margin
 M.BURN_MANA_HYST = 3          -- mana mode: conserve -> burn needs threshold + 3 percentage points
 M.ROTA_SETS = {
-    fire = { "lb", "pyro", "fireball", "comb", "cd", "fb_move", "ice", "invis", "stop" },
-    arcane = { "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop" },
+    fire = { "lb", "pyro", "fireball", "comb", "cd", "fb_move", "ice", "invis", "stop", "steal" },
+    arcane = { "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop", "steal" },
 }
 -- Health samples per GUID (boss1-4 and the target, every TTD_STEP s), so switching between boss
 -- units (Blood Prince Council, Twin Val'kyr) or back to an earlier target keeps its history.
@@ -3140,7 +3313,8 @@ function M.ArcaneState(now, targetOK)
     return A
 end
 
--- Arcane priority model (after the shared emergencies in M.EmergencyReco; research: SimulationCraft 3.3.3):
+-- Arcane priority model (after the shared emergencies in M.EmergencyReco and Spellsteal in
+-- M.SpellstealReco; research: SimulationCraft 3.3.3):
 -- 1) Cooldowns as soon as they are ready (in combat, with a target; no waiting for trinket procs):
 --    with the T10 4-piece Mirror Image first (+18% damage for 30 s), then Presence of Mind (only
 --    while burning, as in SimC), then Arcane Power (the button also casts Icy Veins if known; PoM
@@ -3217,6 +3391,7 @@ function M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, ut
     M.UpdateBurn(now, A)
     M.TrackDrain(now, A)
     local reco, urgent, note = M.EmergencyReco("ab", A.abarrKnown and "abarr" or "fb_move", utilType, utilNote, utilReady, utilCD)
+    if not reco then reco, urgent, note = M.SpellstealReco() end
     if not reco then reco, urgent, note = M.ArcaneReco(A, moving) end
 
     MarkRecommended(reco, urgent)
@@ -3233,7 +3408,7 @@ function M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, ut
     local cds = M.ArcaneCdHint("AP", A.apReady, A.apCD) .. M.ArcaneCdHint("PoM", A.pomReady, A.pomCD)
         .. M.ArcaneCdHint("MI", A.mirrorReady, A.mirrorCD) .. M.ArcaneCdHint("Evo", A.evoReady, A.evoCD)
     local gapText = gapActive and " |cffff3333CAST-GAP!|r" or ""
-    KR.info:SetText(string.format("AB: %s%d/4|r  Mana: %s%d%%|r  %s%s%s  %s%s", stackColor, A.stacks, manaColor, A.manaPct, burnText, mbText, cds, note or "", gapText))
+    KR.info:SetText(string.format("AB: %s%d/4|r  Mana: %s%d%%|r  %s%s%s  %s%s", stackColor, A.stacks, manaColor, A.manaPct, burnText, mbText, cds, (note or "") .. M.StealInfoText(), gapText))
     if KR.debugInfo then
         if cfg.debugMode then
             KR.debugInfo:SetText(string.format("DBG reco=%s reason=%s | %s | Util=%s", tostring(reco), tostring(note), M.burnWhy or "", tostring(utilType or "-")))
@@ -3248,6 +3423,8 @@ local function UpdateDisplay()
     UpdateButtonCooldownVisuals()
     if not KR:IsShown() then return end
     local now = GetTime()
+    M.stealHint, M.stealPrep = nil, false -- set again by M.SpellstealReco in the rotation below
+    M.UpdateStealIndicator(now)
     local targetOK = UnitExists("target") and not UnitIsDead("target") and UnitCanAttack("player", "target")
     local moving = PlayerMoving()
     lastPlayerMoving = moving
@@ -3297,7 +3474,9 @@ local function UpdateDisplay()
     -- 4) Movement mode only replaces Fireball filler, not Pyro/LB emergencies.
     -- 5) v1.9: LB and Fire Blast are only shown as clickable when their cooldown/GCD is really ready.
     -- Emergencies (analyzer override, Ice Block cancel/skips, ICC utility) are shared with Arcane: M.EmergencyReco.
+    -- Then Spellsteal (M.SpellstealReco, shared): after the emergencies, before Hot Streak (1).
     local eReco, eUrgent, eNote = M.EmergencyReco("fireball", "fb_move", utilType, utilNote, utilReady, utilCD)
+    if not eReco then eReco, eUrgent, eNote = M.SpellstealReco() end
     if eReco then
         reco, urgent, note = eReco, eUrgent, eNote
     elseif hot then
@@ -3359,7 +3538,7 @@ local function UpdateDisplay()
     local cdText = ""
     if lbCD and lbCD > 0.05 and lbCD < 999 then cdText = cdText .. string.format("  LBcd: %.1fs", lbCD) end
     if fireblastCD and fireblastCD > 0.05 and fireblastCD < 999 then cdText = cdText .. string.format(L("  FS cd: %.1fs"), fireblastCD) end
-    KR.info:SetText(string.format("LB: %s%.1fs|r  FB/min: %s%d|r  CombCD: %.0fs  %s%s", lbColor, lbRemain or 0, fbColor, fbpm, combCD or 0, note or "", gapText) .. cdText .. procText .. hotText .. queueText)
+    KR.info:SetText(string.format("LB: %s%.1fs|r  FB/min: %s%d|r  CombCD: %.0fs  %s%s", lbColor, lbRemain or 0, fbColor, fbpm, combCD or 0, (note or "") .. M.StealInfoText(), gapText) .. cdText .. procText .. hotText .. queueText)
     if KR.debugInfo then
         if cfg.debugMode then
             KR.debugInfo:SetText(string.format("DBG reco=%s reason=%s | HS=%s %.1fs id=%s | Proc=%s | Util=%s | Queue=%s", tostring(reco), tostring(note), hot and L("JA") or L("NEIN"), hotRemain or 0, tostring(hotId or "-"), tostring(procName or "-"), tostring(utilType or "-"), burstQueued and L("JA") or L("NEIN")))
@@ -3473,6 +3652,10 @@ function KR:UNIT_INVENTORY_CHANGED(unit) if unit == "player" then M.t10Count = n
 function KR:PLAYER_TALENT_UPDATE() M.ApplyRotaMode(); RebuildSpellMacros() end
 KR.ACTIVE_TALENT_GROUP_CHANGED = KR.PLAYER_TALENT_UPDATE
 KR.CHARACTER_POINTS_CHANGED = KR.PLAYER_TALENT_UPDATE
+-- Spellsteal cache: rescan only when the target's or focus's buffs or the unit itself change.
+function KR:UNIT_AURA(unit) if unit == "target" or unit == "focus" then M.ScanSteal(unit) end end
+function KR:PLAYER_TARGET_CHANGED() M.ScanSteal("target") end
+function KR:PLAYER_FOCUS_CHANGED() M.ScanSteal("focus") end
 function KR:UNIT_SPELLCAST_INTERRUPTED(unit) if unit == "player" then lastCastEnd = GetTime() end end
 function KR:UNIT_SPELLCAST_FAILED(unit) if unit == "player" then lastCastEnd = GetTime() end end
 function KR:PLAYER_DEAD()
@@ -3636,6 +3819,17 @@ local function HandleSlash(msg)
         M.ResetBurnState() -- decide again with the new setting
         print(string.format(L("MageHelper: Burn-Modus = %s, Mana-Schwelle %d%%"), cfg.arcaneBurnMode == "mana" and L("Nur nach Mana") or L("Automatisch (Zeit bis zum Tod gegen Mana)"), cfg.arcaneBurnMana))
         if sub ~= "auto" and sub ~= "mana" and not pct then print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana")) end
+    elseif cmd == "raub" or cmd == "steal" or cmd == "zauberraub" or cmd == "spellsteal" then
+        local sub = string.lower(arg or "")
+        local known = true
+        if sub == "an" or sub == "on" then cfg.spellsteal = true
+        elseif sub == "aus" or sub == "off" then cfg.spellsteal = false
+        elseif sub == "alle" or sub == "all" then cfg.spellsteal, cfg.spellstealAll = true, true
+        elseif sub == "lohnend" or sub == "worth" then cfg.spellsteal, cfg.spellstealAll = true, false
+        else known = false end
+        M.RescanSteal()
+        print(M.StealModeText())
+        if not known then print(L("/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)")) end
     elseif cmd == "lang" or cmd == "sprache" then
         local sub = string.lower(arg or "")
         if sub == "de" or sub == "en" or sub == "auto" then
@@ -3675,6 +3869,7 @@ local function HandleSlash(msg)
         print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
         print(L("/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)"))
         print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"))
+        print(L("/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"))
     end
 end
 
@@ -3774,6 +3969,13 @@ local function SetupOptions(db)
                     values = { auto = L("Automatisch (Zeit bis zum Tod gegen Mana)"), mana = L("Nur nach Mana") } },
                 arcaneBurnMana = range(L("Burn ab Mana (%)"), 3, 10, 90, 1),
             } },
+            spellsteal = { type = "group", name = L("Zauberraub"), order = 2.7, get = get,
+                set = function(info, v) cfg[info[#info]] = v; M.RescanSteal() end, args = {
+                help = { type = "description", order = 1, fontSize = "medium",
+                    name = L("Hat dein Ziel einen stehlbaren Buff von der Liste lohnender Buffs (z. B. bei Lord Jaraxxus, Lady Todeswisper, den Fraktionschampions, der Argentumbeichtpatin und Sjonnir), leuchtet der Raub-Button rot, nach den Notfällen (Eisblock, Gegenzauber) und vor dem Schaden. Zauberraub hat 30 m Reichweite und kostet einen globalen Cooldown; außer Reichweite wird der Button blau. Hat nur dein Fokus so einen Buff, steht ein Hinweis in der Infozeile; der Button wirkt auf Mouseover, sonst aufs Ziel. Das Symbol über der Leiste zeigt den ersten stehlbaren Buff des Ziels.") },
+                spellsteal = toggle(L("Zauberraub empfehlen"), 2),
+                spellstealAll = toggle(L("Auch nicht gelistete stehlbare Buffs empfehlen (nicht dringend)"), 3),
+            } },
             bosses = { type = "group", name = L("Boss-Mechaniken"), order = 3, get = get, set = set, args = {
                 bossSkips = toggle(L("Eisblock bei Boss-Mechaniken (Stechende Seuche, Kochendes Blut, Schwärmende Schatten)"), 1),
                 iceBlockLead = range(L("Eisblock-Vorlauf vor Boss-Casts (Sekunden)"), 2, 0, 3, 0.1),
@@ -3847,6 +4049,7 @@ function MH:ApplyProfile()
     M.ApplyRotaMode()
     RebuildSpellMacros()
     ApplyTheme()
+    M.RescanSteal() -- the new profile may have Spellsteal on or off
 end
 
 function MH:OnInitialize()
@@ -3868,13 +4071,15 @@ function MH:OnInitialize()
 end
 
 local EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_DEAD", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED", "INSPECT_TALENT_READY",
-    "PLAYER_TALENT_UPDATE", "UNIT_INVENTORY_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }
+    "PLAYER_TALENT_UPDATE", "UNIT_INVENTORY_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED",
+    "UNIT_AURA", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED" }
 
 function MH:OnEnable()
     CreateUI()
     CreateAnalyzerWindow()
     CreateAnalyzerMinimapButton()
     ApplyTheme()
+    M.RescanSteal() -- a target kept through /reload
     for _, event in ipairs(EVENTS) do
         self:RegisterEvent(event, function(e, ...) KR[e](KR, ...) end)
     end
