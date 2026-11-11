@@ -104,6 +104,10 @@ CL("SPELL_CAST_SUCCESS", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 42833, FB, 
 CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42891, PYRO, 4)
 CL("SPELL_CAST_SUCCESS", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 42891, PYRO, 4)
 CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55360, LB, 4)
+-- matching is by ID: a Fireball rank with an unexpected name still counts, a triggered spell that only
+-- shares the name (Living Bomb explosion 55362) does not
+CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42832, "Some Other Name", 4)
+CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55362, LB, 4)
 -- own damage: spell hit, LB tick, LB explosion; other player's damage is ignored
 CL("SPELL_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42833, FB, 4, 1000, 0, 4, 0, 0, 0, nil, nil, nil)
 CL("SPELL_PERIODIC_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55360, LB, 4, 200, 0, 4, 0, 0, 0, nil, nil, nil)
@@ -122,7 +126,7 @@ CL("SWING_DAMAGE", BOSS, "Boss", BOSSF, OTHER, "Anya", OTHERF, 77777, 0, 1, 0, 0
 Tick(0.15); Tick(0.15)
 
 local fbpm = tonumber(KR.info.__text:match("FB/min: |c%x%x%x%x%x%x%x%x(%d+)"))
-check(fbpm == 4, "FB/min counts own Fireballs (all ranks), got " .. tostring(fbpm) .. " in " .. KR.info.__text)
+check(fbpm == 5, "FB/min counts own Fireballs (all ranks, by ID), got " .. tostring(fbpm) .. " in " .. KR.info.__text)
 local before = #OUT
 Slash("report")
 local fbs, pyros, lbs
@@ -130,7 +134,7 @@ for i = before + 1, #OUT do
   local a, b = OUT[i]:match(": (%d+)%s+Pyros: (%d+)$"); if a then fbs, pyros = tonumber(a), tonumber(b) end
   local c = OUT[i]:match("^LB[%- ]%a+: (%d+)"); if c then lbs = tonumber(c) end
 end
-check(fbs == 4 and pyros == 1 and lbs == 1, string.format("fight report counts own casts: FB %s Pyro %s LB %s", tostring(fbs), tostring(pyros), tostring(lbs)))
+check(fbs == 5 and pyros == 1 and lbs == 1, string.format("fight report counts own casts: FB %s Pyro %s LB %s", tostring(fbs), tostring(pyros), tostring(lbs)))
 
 Slash("analyse stop")
 local r = MH.db.char.analyzer.lastTraining

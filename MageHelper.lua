@@ -365,9 +365,13 @@ M.CAST_IDS = {
     mirror = { [55342]=true },
     iceblock = { [45438]=true },
 }
+-- By spell ID; the client-language name only when the log carries no ID. (Matching the name as
+-- well would count triggered spells that share it, e.g. the Living Bomb explosion.)
 function M.IsSpell(key, spellId, spellName)
-    local ids = M.CAST_IDS[key]
-    if ids and spellId and ids[spellId] then return true end
+    if spellId then
+        local ids = M.CAST_IDS[key]
+        return ids ~= nil and ids[spellId] == true
+    end
     return spellName ~= nil and spellName == spells[key]
 end
 
@@ -2722,11 +2726,11 @@ function KR:COMBAT_LOG_EVENT_UNFILTERED(...)
 
     -- Analyzer damage / incoming / death recap ringbuffer
     if event == "SPELL_DAMAGE" or event == "RANGE_DAMAGE" then
-        local sid, sname, school, amount, overkill = select(9, ...)
+        local _, sname, _, amount, overkill = select(9, ...)
         if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0) end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, sname, amount, overkill) end
     elseif event == "SPELL_PERIODIC_DAMAGE" then
-        local sid, sname, school, amount, overkill = select(9, ...)
+        local _, sname, _, amount, overkill = select(9, ...)
         if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0); if M.IsSpell("lb", sid, sname) then AnalyzerAdd("lbTicks", 1) end end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, sname, amount, overkill) end
     elseif event == "SWING_DAMAGE" then
