@@ -21,9 +21,13 @@ Fire, Arcane and Frost Mage helper for **World of Warcraft: Wrath of the Lich Ki
 
 ## Installation
 
-1. Download or clone this repository into `World of Warcraft\Interface\AddOns\`.
-2. The folder must be named exactly **`MageHelper`** (WoW only loads it when the folder matches `MageHelper.toc`). If you downloaded the ZIP, rename `MageHelper-main` to `MageHelper`.
+1. Download `MageHelper-vX.Y.zip` from the [latest release](https://github.com/Richie1710/MageHelper/releases/latest).
+2. Unzip it into `World of Warcraft\Interface\AddOns\` – it already contains the `MageHelper` folder.
 3. Restart the game completely (a new addon folder is not picked up by `/reload`).
+
+Updating: unzip the new release over the old folder; your settings are kept.
+
+From source instead: clone into a folder named exactly `MageHelper` (WoW only loads it when the folder matches `MageHelper.toc`):
 
 ```bash
 git clone https://github.com/Richie1710/MageHelper.git MageHelper
@@ -62,6 +66,8 @@ venv\Scripts\python -I tools\smoke.py
 
 It replays a fight, every slash command, the settings window, profile switching, the Focus Magic picker and the Spellsteal helper, and exits with code 1 on any failed check or Lua error. It does not replace testing in the game.
 
+**Releases:** bump `## Version` in `MageHelper.toc`, then push a matching tag (`git tag v3.4 && git push origin v3.4`). A GitHub Action runs the smoke test, checks that the tag matches the TOC version and attaches `MageHelper-v3.4.zip` (just the addon folder) to the release.
+
 ## Credits
 
 - Embedded libraries: [Ace3](https://www.wowace.com/projects/ace3) (Release-r960) by the Ace3 Development Team, see [`Libs/Ace3-LICENSE.txt`](Libs/Ace3-LICENSE.txt).
@@ -98,7 +104,7 @@ Helfer für Feuer-, Arkan- und Frostmagier in **WotLK 3.3.5a**, für deutsche un
 - **Einstellungsfenster mit Profilen** (`/mh config`)
 
 **Installation:**
-1. Den Ordner als **`MageHelper`** nach `Interface\AddOns\` legen. Beim ZIP-Download `MageHelper-main` in `MageHelper` umbenennen.
+1. `MageHelper-vX.Y.zip` aus dem [neuesten Release](https://github.com/Richie1710/MageHelper/releases/latest) laden und nach `Interface\AddOns\` entpacken – der Ordner `MageHelper` ist schon drin.
 2. Das Spiel komplett neu starten.
 
 Alle Befehle zeigt `/mh help`.
