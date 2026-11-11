@@ -3,7 +3,7 @@
 ## Notes: Fire + Arcane Mage WotLK Parse Helper + Analyzer for Kahuchan
 ## Notes-deDE: Feuer- und Arkanmagier-Helfer (WotLK) mit Rota-Anzeige, Buff-Leiste und Analyzer
 ## Author: Kahu/Shiro
-## Version: 3.3
+## Version: 3.4
 ## OptionalDeps: Ace3
 ## SavedVariables: MageHelperDB
 ## SavedVariablesPerCharacter: MageHelperLegacyDB

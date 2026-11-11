@@ -1,4 +1,4 @@
--- MageHelper v3.3 Arcane rotation (burn/conserve with time-to-die estimate), auto Fire/Arcane by talents; v3.2 color themes, flask choice; Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
+-- MageHelper v3.4 Fire, Arcane and Frost rotations, Spellsteal helper; T9 swap, themes, flask choice, Ace3 settings; German + English client support
 -- WotLK 3.3.5 Fire, Arcane and Frost Mage helper. Fire: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
 local ADDON = "MageHelper"
