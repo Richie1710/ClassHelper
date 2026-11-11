@@ -1,5 +1,5 @@
 -- MageHelper v3.3 Arcane rotation (burn/conserve with time-to-die estimate), auto Fire/Arcane by talents; v3.2 color themes, flask choice; Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
--- WotLK 3.3.5 Fire and Arcane Mage helper. Fire: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
+-- WotLK 3.3.5 Fire, Arcane and Frost Mage helper. Fire: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
 local ADDON = "MageHelper"
 local MH = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceEvent-3.0", "AceTimer-3.0", "AceConsole-3.0")
@@ -24,7 +24,7 @@ local defaults = {
         buffMinimapX = -10,
         buffMinimapY = -112,
         combustionLB = 10,
-        rotationMode = "auto",    -- "auto" (talent tree with most points), "fire" or "arcane"
+        rotationMode = "auto",    -- "auto" (talent tree with most points), "fire", "arcane" or "frost"
         arcaneBurnMode = "auto",  -- "auto" (time to die vs. time to OOM, like SimC) or "mana" (threshold only)
         arcaneBurnMana = 35,      -- burn while mana % >= this (mana mode, and auto while the estimate is unreliable)
         spellsteal = true,        -- Spellsteal hint, button glow and target buff indicator
@@ -313,10 +313,10 @@ local L_EN = {
     ["Arkan"] = "Arcane",
     ["Feuer"] = "Fire",
     ["Rota-Modus"] = "Rotation mode",
-    ["Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan oder Feuer, Frost nutzt Feuer). Die Buttons wechseln nur außerhalb des Kampfes."] = "Automatic: the talent tree with the most points decides (Arcane or Fire, Frost uses Fire). The buttons only switch out of combat.",
+    ["Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan, Feuer oder Frost). Die Buttons wechseln nur außerhalb des Kampfes."] = "Automatic: the talent tree with the most points decides (Arcane, Fire or Frost). The buttons only switch out of combat.",
     ["MageHelper: Rota = %s"] = "MageHelper: rotation = %s",
     ["MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf."] = "MageHelper: In combat - the buttons switch after combat.",
-    ["/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)"] = "/mh rota auto|fire|arcane - Fire or Arcane rotation (auto = by talents)",
+    ["/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"] = "/mh rota auto|fire|arcane|frost - Fire, Arcane or Frost rotation (auto = by talents)",
     ["Burn oder Sparen"] = "Burn or conserve",
     ["Automatisch (Zeit bis zum Tod gegen Mana)"] = "Automatic (time to die vs. mana)",
     ["Nur nach Mana"] = "By mana only",
@@ -373,6 +373,15 @@ local L_EN = {
     ["MageHelper: Zauberraub AN (nur lohnende Buffs)"] = "MageHelper: Spellsteal ON (only buffs worth stealing)",
     ["MageHelper: Zauberraub AN (alle stehlbaren Buffs)"] = "MageHelper: Spellsteal ON (all stealable buffs)",
     ["/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"] = "/mh steal on|off|all|worth - Spellsteal hint (all = also unlisted buffs)",
+    -- Frost rotation
+    ["Frost"] = "Frost",
+    ["Kein Begleiter: %s"] = "No pet: %s",
+    ["Schmuckstück bereit"] = "Trinket ready",
+    ["Ziel eingefroren: %s"] = "Target frozen: %s",
+    ["%s: %s-Abklingzeit %.0fs"] = "%s: %s cooldown %.0fs",
+    ["Füller: %s"] = "Filler: %s",
+    ["fehlt"] = "missing",
+    ["Dauer: %.0fs  Frost-Rota: keine Feuerball-Wertung"] = "Duration: %.0fs  Frost rotation: no Fireball rating",
 }
 local useEnglish = GetLocale() ~= "deDE"
 local function L(s)
@@ -428,6 +437,13 @@ local spells = {
     evo = SpellName(12051, "Hervorrufung"),
     mb = SpellName(44401, "Geschosssalve"),
     steal = SpellName(30449, "Zauberraub"),
+    -- Frost (max ranks, IDs checked on Wowhead WotLK)
+    fbolt = SpellName(42842, "Frostblitz"),
+    ilance = SpellName(42914, "Eislanze"),
+    dfreeze = SpellName(44572, "Tiefk\195\188hlen"),
+    ffb = SpellName(47610, "Frostfeuerblitz"),
+    csnap = SpellName(11958, "K\195\164lteeinbruch"),
+    elem = SpellName(31687, "Wasserelementar beschw\195\182ren"),
 }
 
 -- Spell IDs of every rank the player may cast, for the combat log (3.3.5 passes the spellId).
@@ -573,8 +589,8 @@ local function PrintFightReport(force)
     if dur <= 5 and not force then return end
     local fbpm = dur > 0 and (fightStats.fireballs / dur * 60) or 0
     print(L("|cffff7d0aMageHelper Fight-Report|r"))
-    if M.activeRota == "arcane" then -- Fireballs and their rating mean nothing in the Arcane rotation
-        print(string.format(L("Dauer: %.0fs  Arkan-Rota: keine Feuerball-Wertung"), dur))
+    if M.activeRota == "arcane" or M.activeRota == "frost" then -- Fireballs and their rating mean nothing there
+        print(string.format(M.activeRota == "frost" and L("Dauer: %.0fs  Frost-Rota: keine Feuerball-Wertung") or L("Dauer: %.0fs  Arkan-Rota: keine Feuerball-Wertung"), dur))
         print(string.format(L("Spiegelbilder: %d  Eisblock: %d"), fightStats.mirrors or 0, fightStats.iceblocks or 0))
         if next(fightStats.reason or {}) then print(L("Häufigste Empfehlungen/Gründe:")); PrintTopReasons() end
         return
@@ -2079,6 +2095,16 @@ local function CreateUI()
     buttons.ap.macroBuilder = M.ArcanePowerMacro -- Arcane Power + Icy Veins when known (off the GCD)
     buttons.ap.cooldownRemaining = M.ApCooldownRemaining -- usable when either of the two is
     SetMacro(buttons.ap, M.ArcanePowerMacro())
+    -- Frost set (Mana Gem, Evocation, Ice Block, Invisibility, Counterspell and the Fire Blast move button are shared).
+    for _, data in ipairs({
+        {"fbolt", "FBolt", spells.fbolt}, {"ilance", "Lance", spells.ilance}, {"dfreeze", "DF", spells.dfreeze},
+        {"ffb", "FFB", spells.ffb}, {"fcd", "CD", spells.iv}, {"csnap", "Snap", spells.csnap}, {"elem", "Ele", spells.elem},
+    }) do
+        CreateSpellButton(KR, data[1], data[2], data[3], data[4])
+    end
+    buttons.fcd.macroBuilder = M.FrostCdMacro -- Icy Veins + Mirror Image + on-use trinkets in one click
+    buttons.fcd.cooldownRemaining = M.FrostCdRemaining -- usable when any of them is
+    SetMacro(buttons.fcd, M.FrostCdMacro())
     local gem = CreateSpellButton(KR, "gem", "Gem", ItemName(M.MANA_GEM_ITEM),
         "#showtooltip " .. ItemName(M.MANA_GEM_ITEM) .. "\n/use " .. ItemName(M.MANA_GEM_ITEM))
     gem.spellName, gem.itemId = nil, M.MANA_GEM_ITEM
@@ -2917,6 +2943,7 @@ M.BURN_MANA_HYST = 3          -- mana mode: conserve -> burn needs threshold + 3
 M.ROTA_SETS = {
     fire = { "lb", "pyro", "fireball", "comb", "cd", "fb_move", "ice", "invis", "stop", "steal" },
     arcane = { "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop", "steal" },
+    frost = { "fbolt", "ilance", "dfreeze", "ffb", "fcd", "csnap", "elem", "gem", "evo", "fb_move", "ice", "invis", "stop", "steal" },
 }
 -- Health samples per GUID (boss1-4 and the target, every TTD_STEP s), so switching between boss
 -- units (Blood Prince Council, Twin Val'kyr) or back to an earlier target keeps its history.
@@ -2942,18 +2969,19 @@ function M.ArcanePowerMacro()
     return MakeMacro(spells.ap, nil, extra)
 end
 
--- "fire" or "arcane": fixed by cfg.rotationMode, or by the talent tree with the most points
--- (Arcane -> arcane; Fire, Frost, no talents -> fire).
+-- "fire", "arcane" or "frost": fixed by cfg.rotationMode, or by the talent tree with the most points
+-- (Arcane -> arcane, Frost -> frost; Fire, no talents -> fire).
 function M.DesiredRota()
     local mode = cfg and cfg.rotationMode or "auto"
-    if mode == "fire" or mode == "arcane" then return mode end
+    if mode == "fire" or mode == "arcane" or mode == "frost" then return mode end
     local group = GetActiveTalentGroup and GetActiveTalentGroup(false, false) or nil
     local best, most = 2, 0
     for tab = 1, 3 do
         local _, _, points = GetTalentTabInfo(tab, false, false, group)
         if (points or 0) > most then best, most = tab, points end
     end
-    return best == 1 and "arcane" or "fire"
+    if best == 1 then return "arcane" elseif best == 3 then return "frost" end
+    return "fire"
 end
 
 -- Show the buttons of one rotation in a row and resize the bar. Secure buttons: out of combat only.
@@ -2984,7 +3012,10 @@ function M.ApplyRotaMode()
     return true
 end
 
-function M.RotaName(rota) return rota == "arcane" and L("Arkan") or L("Feuer") end
+function M.RotaName(rota)
+    if rota == "arcane" then return L("Arkan") elseif rota == "frost" then return L("Frost") end
+    return L("Feuer")
+end
 
 function M.RotaModeText()
     local mode = cfg.rotationMode or "auto"
@@ -3418,6 +3449,202 @@ function M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, ut
     end
 end
 
+-- =============================
+-- Frost rotation
+-- =============================
+-- IDs checked on Wowhead WotLK: Frostbolt 42842 (rank 16), Ice Lance 42914 (rank 3), Deep Freeze
+-- 44572 (30 s cooldown, needs a frozen target), Frostfire Bolt 47610 (rank 2), Cold Snap 11958 (resets
+-- the Frost cooldowns: Deep Freeze, Icy Veins, Water Elemental), Summon Water Elemental 31687 (3 min
+-- cooldown; Glyph of Eternal Water makes the pet permanent), Icy Veins 12472, Mirror Image 55342.
+-- Fingers of Frost: since 3.3.3 the visible buff with the 2 charges is 74396; 44544 is the older/
+-- hidden aura (both 15 s, both checked). Brain Freeze buff "Fireball!" 57761 (instant, free Fireball
+-- or Frostfire Bolt). Frozen target: Frost Nova (all ranks), Freeze (Water Elemental 33395),
+-- Frostbite 12494, Shattered Barrier 55080. T10 4-piece (70748): Mirror Image +18% damage for 30 s.
+M.SPELL_ID.fbolt, M.SPELL_ID.ilance, M.SPELL_ID.dfreeze = 42842, 42914, 44572
+M.SPELL_ID.ffb, M.SPELL_ID.csnap, M.SPELL_ID.elem = 47610, 11958, 31687
+M.FOF_IDS = { [74396] = true, [44544] = true }
+M.FOF_NAMES = SpellNames(74396, "Eisige Finger", "Fingers of Frost")
+M.BF_IDS = { [57761] = true }
+M.BF_NAMES = SpellNames(57761, "Feuerball!", "Fireball!")
+M.FROZEN_IDS = { [122] = true, [865] = true, [6131] = true, [10230] = true, [27088] = true, [42917] = true,
+                 [33395] = true, [12494] = true, [55080] = true }
+M.FROZEN_NAMES = SpellNames(42917, "Frostnova", "Frost Nova", "Einfrieren", "Freeze", "Erfrierung", "Frostbite",
+                 "Zerschmetterte Barriere", "Shattered Barrier")
+M.COLD_SNAP_DF = 15           -- Cold Snap when Deep Freeze has more than this left (SimC)
+M.TRINKET_SLOTS = { 13, 14 }
+M.frost = {}
+
+-- Fingers of Frost: up, charges (the highest count of the two auras, at least 1 while up), name.
+function M.FingersOfFrost()
+    local up, best, name = false, 0, nil
+    for i = 1, 40 do
+        local n, _, _, count, _, _, _, _, _, _, spellId = UnitBuff("player", i)
+        if not n then break end
+        local hit = M.FOF_IDS[spellId or 0]
+        if not hit then for _, w in ipairs(M.FOF_NAMES) do if n == w then hit = true; break end end end
+        if hit then up = true; name = name or n; best = math.max(best, count or 0, 1) end
+    end
+    return up, best, name
+end
+
+-- Target frozen (Frost Nova, Freeze, Frostbite, Shattered Barrier), from any caster.
+function M.TargetFrozen()
+    for i = 1, 40 do
+        local n, _, _, _, _, _, _, _, _, _, spellId = UnitDebuff("target", i)
+        if not n then break end
+        if M.FROZEN_IDS[spellId or 0] then return true end
+        for _, w in ipairs(M.FROZEN_NAMES) do if n == w then return true end end
+    end
+    return false
+end
+
+-- On-use trinkets (GetItemSpell knows a use effect): ready, shortest remaining cooldown.
+function M.TrinketCooldown()
+    local ready, best = false, 999
+    for _, slot in ipairs(M.TRINKET_SLOTS) do
+        local id = ItemIdFromLink(GetInventoryItemLink("player", slot))
+        if id and GetItemSpell and GetItemSpell(id) then
+            local r, remain = ItemSlotReady(slot)
+            ready = ready or r
+            best = math.min(best, r and 0 or remain)
+        end
+    end
+    return ready, best
+end
+
+-- Frost cooldown button: Icy Veins (if known) and the trinkets are off the GCD, so one click casts
+-- them all together with Mirror Image. With the T10 4-piece Mirror Image goes first (+18% damage).
+function M.FrostCdMacro()
+    local iv = M.KnowsSpell(M.SPELL_ID.iv)
+    local t10 = M.T10Count() >= 4
+    local t = { "#showtooltip " .. (iv and spells.iv or spells.mirror) }
+    if cfg.useGloves then t[#t + 1] = "/use 10" end
+    if t10 then t[#t + 1] = "/cast " .. spells.mirror end
+    if iv then t[#t + 1] = "/cast " .. spells.iv end
+    t[#t + 1] = "/use 13"
+    t[#t + 1] = "/use 14"
+    if not t10 then t[#t + 1] = "/cast " .. spells.mirror end
+    return table.concat(t, "\n")
+end
+
+-- Frost cooldown button: usable as soon as one of its parts is.
+function M.FrostCdRemaining()
+    local r = SpellCooldownRemaining(spells.mirror)
+    if M.KnowsSpell(M.SPELL_ID.iv) then r = math.min(r, SpellCooldownRemaining(spells.iv)) end
+    local _, trinket = M.TrinketCooldown()
+    return math.min(r, trinket)
+end
+
+function M.FrostState(now, targetOK)
+    local F = M.frost
+    F.mana, F.maxMana = UnitPower("player", 0) or 0, UnitPowerMax("player", 0) or 0
+    if F.maxMana <= 0 then F.maxMana = 1 end
+    F.manaPct = math.floor(F.mana / F.maxMana * 100 + 0.5)
+    F.inCombat = UnitAffectingCombat("player") and true or false
+    F.fof, F.fofCount, F.fofName = M.FingersOfFrost()
+    local bf, _, bfName = HasBuff("player", M.BF_NAMES, M.BF_IDS)
+    F.bf, F.bfName = bf, bfName
+    F.frozen = targetOK and M.TargetFrozen() or false
+    F.petUp = UnitExists("pet") and not UnitIsDead("pet")
+    F.elemReady, F.elemCD = M.KnownReady("elem")
+    F.dfKnown = M.KnowsSpell(M.SPELL_ID.dfreeze)
+    F.dfReady, F.dfCD = M.KnownReady("dfreeze")
+    F.csReady, F.csCD = M.KnownReady("csnap")
+    F.ivReady, F.ivCD = M.KnownReady("iv")
+    F.mirrorReady, F.mirrorCD = M.KnownReady("mirror")
+    F.trinketReady = M.TrinketCooldown()
+    F.evoReady, F.evoCD = M.KnownReady("evo")
+    F.gemReady = GetItemCount(M.MANA_GEM_ITEM) > 0 and M.ItemCooldownRemaining(M.MANA_GEM_ITEM) <= 0
+    F.ffbKnown = M.KnowsSpell(M.SPELL_ID.ffb)
+    F.ilanceKnown = M.KnowsSpell(M.SPELL_ID.ilance)
+    F.fireblastUsable = targetOK and SpellUsableNow(spells.fireblast)
+    F.targetOK = targetOK
+    F.cdsAllowed = targetOK and F.inCombat
+    F.t10 = M.T10Count() >= 4
+    return F
+end
+
+-- Frost priority model (after the shared emergencies in M.EmergencyReco and the Spellsteal hook;
+-- research: SimulationCraft 3.3.3 frost list):
+-- 1) Summon Water Elemental when no pet is out (also in combat; instant, 3 min cooldown).
+-- 2) Cooldowns as soon as ready (in combat, with a target; no waiting for procs): one button for
+--    Icy Veins + Mirror Image + on-use trinkets (T10 4-piece: Mirror Image first).
+--    A cooldown that only shows the GCD counts as ready (M.KnownReady), so nothing flickers.
+-- 3) Mana Gem (in combat) when the missing mana >= the gem's yield.
+-- 4) Deep Freeze when Fingers of Frost is up or the target is frozen (on bosses FoF is the only
+--    "frozen" source).
+-- 5) Cold Snap (known, in combat with a target) when Deep Freeze has more than 15 s left.
+-- 6) Frostfire Bolt while Brain Freeze ("Fireball!") is up: instant and free, also while moving.
+-- 7) Moving: Ice Lance with Fingers of Frost or a frozen target, else Fire Blast, else Ice Lance.
+-- 8) Evocation (in combat) below 30% mana (rare for Frost; placed above the filler so it shows).
+-- 9) Frostbolt as the filler, also with Fingers of Frost (Shatter crit).
+function M.FrostReco(F, moving)
+    local missing = F.maxMana - F.mana
+    if F.elemReady and not F.petUp then
+        return "elem", true, string.format(L("Kein Begleiter: %s"), spells.elem)
+    elseif F.cdsAllowed and (F.ivReady or F.mirrorReady or F.trinketReady) then
+        local note
+        if F.t10 and F.mirrorReady then note = string.format(L("%s zuerst (T10: +18%% Schaden)"), spells.mirror)
+        elseif F.ivReady then note = string.format(L("%s bereit"), spells.iv)
+        elseif F.mirrorReady then note = string.format(L("%s bereit"), spells.mirror)
+        else note = L("Schmuckstück bereit") end
+        return "fcd", true, note
+    elseif F.inCombat and F.gemReady and missing >= M.MANA_GEM_YIELD then
+        return "gem", true, string.format(L("Manastein: %d Mana fehlen"), missing)
+    elseif F.targetOK and F.dfReady and (F.fof or F.frozen) then
+        if F.fof then return "dfreeze", true, string.format(L("%s aktiv: %s"), F.fofName or "FoF", spells.dfreeze) end
+        return "dfreeze", true, string.format(L("Ziel eingefroren: %s"), spells.dfreeze)
+    elseif F.cdsAllowed and F.csReady and F.dfKnown and F.dfCD > M.COLD_SNAP_DF and F.dfCD < 999 then
+        return "csnap", true, string.format(L("%s: %s-Abklingzeit %.0fs"), spells.csnap, spells.dfreeze, F.dfCD)
+    elseif F.targetOK and F.bf and F.ffbKnown then
+        return "ffb", true, string.format(L("%s aktiv: %s"), F.bfName or "Brain Freeze", spells.ffb)
+    elseif moving and F.targetOK and F.ilanceKnown and (F.fof or F.frozen) then
+        return "ilance", false, string.format(L("Bewegung: %s"), spells.ilance)
+    elseif moving and cfg.showMovementFireBlast and F.fireblastUsable then
+        return "fb_move", false, string.format(L("Bewegung: %s"), spells.fireblast)
+    elseif moving and F.targetOK and F.ilanceKnown then
+        return "ilance", false, string.format(L("Bewegung: %s"), spells.ilance)
+    elseif F.inCombat and F.evoReady and F.manaPct < M.EVO_BELOW * 100 then
+        return "evo", true, string.format(L("%s: Mana %d%%"), spells.evo, F.manaPct)
+    elseif F.fof then
+        return "fbolt", false, string.format(L("%s aktiv: %s"), F.fofName or "FoF", spells.fbolt)
+    end
+    return "fbolt", false, string.format(L("Füller: %s"), spells.fbolt)
+end
+
+function M.UpdateFrost(now, targetOK, moving, utilType, utilNote, utilReady, utilCD)
+    local F = M.FrostState(now, targetOK)
+    local reco, urgent, note = M.EmergencyReco("fbolt", "ilance", utilType, utilNote, utilReady, utilCD)
+    if not reco and M.SpellstealReco then -- shared Spellsteal helper (own branch), right after the emergencies
+        local r, u, n = M.SpellstealReco()
+        if r then reco, urgent, note = r, u, n end
+    end
+    if not reco then reco, urgent, note = M.FrostReco(F, moving) end
+
+    MarkRecommended(reco, urgent)
+    NoteRecommendation(reco, note)
+    if reco == "stop" then UpdateAnalyzerIcon("interrupt") elseif reco == "invis" then UpdateAnalyzerIcon("invis") else UpdateAnalyzerIcon(nil) end
+    RefreshAnalyzerWindow()
+    if utilType == "warn" and buttons.stop then ButtonSetState(buttons.stop, "prep", 0.80) end
+
+    local fofColor = F.fofCount >= 2 and "|cff33ff33" or (F.fofCount == 1 and "|cffffff33" or "|cffcccccc")
+    local manaColor = F.manaPct >= 60 and "|cff33ff33" or (F.manaPct >= 30 and "|cffffff33" or "|cffff3333")
+    local bfText = F.bf and "  |cffff8020BF!|r" or ""
+    local dfText = F.dfKnown and ("  DF " .. (F.dfReady and "|cff33ff33ok|r" or FormatRemain(F.dfCD))) or ""
+    local petText = F.petUp and "  Ele: |cff33ff33ok|r" or ("  Ele: |cffff3333" .. L("fehlt") .. "|r")
+    local cds = M.ArcaneCdHint("IV", F.ivReady, F.ivCD) .. M.ArcaneCdHint("MI", F.mirrorReady, F.mirrorCD)
+    local gapText = gapActive and " |cffff3333CAST-GAP!|r" or ""
+    KR.info:SetText(string.format("FoF: %s%d|r%s%s%s  Mana: %s%d%%|r%s  %s%s", fofColor, F.fofCount, bfText, dfText, petText, manaColor, F.manaPct, cds, note or "", gapText) .. M.StealInfoText())
+    if KR.debugInfo then
+        if cfg.debugMode then
+            KR.debugInfo:SetText(string.format("DBG reco=%s reason=%s | FoF=%d BF=%s frozen=%s pet=%s DFcd=%.1f | Util=%s", tostring(reco), tostring(note),
+                F.fofCount, tostring(F.bf), tostring(F.frozen), tostring(F.petUp), math.min(F.dfCD or 0, 999), tostring(utilType or "-")))
+        else
+            KR.debugInfo:SetText("")
+        end
+    end
+end
+
 local function UpdateDisplay()
     UpdateBuffBar()
     UpdateButtonCooldownVisuals()
@@ -3463,6 +3690,9 @@ local function UpdateDisplay()
     if M.activeRota == "arcane" then
         M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, utilCD)
         return
+    elseif M.activeRota == "frost" then
+        M.UpdateFrost(now, targetOK, moving, utilType, utilNote, utilReady, utilCD)
+        return
     end
 
     -- Priority model v1.8:
@@ -3473,7 +3703,7 @@ local function UpdateDisplay()
     --    in focus before returning to Fireball spam, so burst pieces do not fall out of sight.
     -- 4) Movement mode only replaces Fireball filler, not Pyro/LB emergencies.
     -- 5) v1.9: LB and Fire Blast are only shown as clickable when their cooldown/GCD is really ready.
-    -- Emergencies (analyzer override, Ice Block cancel/skips, ICC utility) are shared with Arcane: M.EmergencyReco.
+    -- Emergencies (analyzer override, Ice Block cancel/skips, ICC utility) are shared with Arcane and Frost: M.EmergencyReco.
     -- Then Spellsteal (M.SpellstealReco, shared): after the emergencies, before Hot Streak (1).
     local eReco, eUrgent, eNote = M.EmergencyReco("fireball", "fb_move", utilType, utilNote, utilReady, utilCD)
     if not eReco then eReco, eUrgent, eNote = M.SpellstealReco() end
@@ -3647,7 +3877,11 @@ function KR:UNIT_SPELLCAST_SUCCEEDED(unit, spell)
 end
 
 function KR:INSPECT_TALENT_READY() OnFMInspectReady() end
-function KR:UNIT_INVENTORY_CHANGED(unit) if unit == "player" then M.t10Count = nil end end -- T10 count cache
+function KR:UNIT_INVENTORY_CHANGED(unit)
+    if unit ~= "player" then return end
+    M.t10Count = nil -- T10 count cache
+    RebuildSpellMacros() -- Frost cooldown button: Mirror Image first with T10 (out of combat only)
+end
 -- Talents or spec changed: auto rotation mode may switch (out of combat), Icy Veins may be new.
 function KR:PLAYER_TALENT_UPDATE() M.ApplyRotaMode(); RebuildSpellMacros() end
 KR.ACTIVE_TALENT_GROUP_CHANGED = KR.PLAYER_TALENT_UPDATE
@@ -3803,14 +4037,14 @@ local function HandleSlash(msg)
     elseif cmd == "config" or cmd == "options" or cmd == "optionen" then
         MH:OpenOptions()
     elseif cmd == "rota" or cmd == "rotation" then
-        local aliases = { auto = "auto", fire = "fire", feuer = "fire", arcane = "arcane", arkan = "arcane" }
+        local aliases = { auto = "auto", fire = "fire", feuer = "fire", arcane = "arcane", arkan = "arcane", frost = "frost" }
         local mode = aliases[string.lower(arg or "")]
         if mode then
             cfg.rotationMode = mode
             if not M.ApplyRotaMode() then print(L("MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
         end
         print(string.format(L("MageHelper: Rota = %s"), M.RotaModeText()))
-        if not mode then print(L("/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)")) end
+        if not mode then print(L("/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)")) end
     elseif cmd == "burn" then
         local sub, pct = string.match(string.lower(arg or ""), "^(%a*)%s*(%d*)")
         if sub == "auto" or sub == "mana" then cfg.arcaneBurnMode = sub end
@@ -3867,7 +4101,7 @@ local function HandleSlash(msg)
         print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
         print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
         print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
-        print(L("/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)"))
+        print(L("/mh rota auto|feuer|arkan|frost - Feuer-, Arkan- oder Frost-Rota (auto = nach Talenten)"))
         print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"))
         print(L("/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"))
     end
@@ -3947,9 +4181,9 @@ local function SetupOptions(db)
             } },
             rotation = { type = "group", name = L("Rotation"), order = 2, get = get, set = set, args = {
                 rotationMode = { type = "select", name = L("Rota-Modus"), order = 0,
-                    desc = L("Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan oder Feuer, Frost nutzt Feuer). Die Buttons wechseln nur außerhalb des Kampfes."),
+                    desc = L("Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan, Feuer oder Frost). Die Buttons wechseln nur außerhalb des Kampfes."),
                     values = function()
-                        return { auto = string.format(L("Automatisch (%s)"), M.RotaName(M.DesiredRota())), fire = L("Feuer"), arcane = L("Arkan") }
+                        return { auto = string.format(L("Automatisch (%s)"), M.RotaName(M.DesiredRota())), fire = L("Feuer"), arcane = L("Arkan"), frost = L("Frost") }
                     end,
                     set = function(_, v)
                         cfg.rotationMode = v
