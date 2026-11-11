@@ -16,19 +16,31 @@ local SPELLS = {
   [69195]={"Stechende Seuche","Pungent Blight"}, [32182]={"Heldentum","Heroism"},
   [57399]={"Gut gen\195\164hrt","Well Fed"}, [54758]={"Hypergeschwindigkeitsbeschleunigung","Hyperspeed Acceleration"},
   [48263]={"Frostpr\195\164senz","Frost Presence"}, [9634]={"Terrorb\195\164rengestalt","Dire Bear Form"}, [5487]={"B\195\164rengestalt","Bear Form"},
+  -- Arcane; cost/cast as GetSpellInfo returns them in 3.3.5 (4th and 7th value)
+  [42897]={"Arkanschlag","Arcane Blast", cost=229, cast=2500}, [36032]={"Arkanschlag","Arcane Blast"},
+  [42846]={"Arkane Geschosse","Arcane Missiles"}, [44781]={"Arkanbeschuss","Arcane Barrage"},
+  [12042]={"Arkane Macht","Arcane Power"}, [12043]={"Geistesgegenwart","Presence of Mind"},
+  [12472]={"Eisige Adern","Icy Veins"}, [12051]={"Hervorrufung","Evocation"}, [44401]={"Geschosssalve","Missile Barrage"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
   if type(x) == "number" then
     local s = SPELLS[x]; if not s then return nil end
-    return (LOCALE == "deDE") and s[1] or s[2], nil, "Interface\\Icons\\spell" .. x
+    return (LOCALE == "deDE") and s[1] or s[2], nil, "Interface\\Icons\\spell" .. x, s.cost or 0, false, 0, s.cast or 0
   end
   return x, nil, "Interface\\Icons\\byname"
 end
 function GetItemInfo() return nil end           -- items not cached
 function GetItemIcon(id) return "Interface\\Icons\\item" .. id end
 function GetTime() return now end
-function GetSpellCooldown() return 0, 0, 1 end
+-- COOLDOWNS[spell name] / ITEM_COOLDOWNS[item ID] = seconds left (set by the test; GetTime() moves on)
+COOLDOWNS, ITEM_COOLDOWNS = {}, {}
+local function cd(left) if left and left > 0 then return now, left, 1 end return 0, 0, 1 end
+function GetSpellCooldown(name) return cd(COOLDOWNS[name]) end
+function GetItemCooldown(id) return cd(ITEM_COOLDOWNS[id]) end
+-- KNOWN[spellId] = false makes a spell unknown (default: every spell is known)
+KNOWN = {}
+function IsSpellKnown(id) return KNOWN[id] ~= false end
 function GetInventoryItemCooldown() return 0, 0, 1 end
 function GetAddOnMetadata(a, k) if k == "Version" then return ADDON_VERSION end end
 function print(...)
@@ -101,7 +113,18 @@ function UnitBuff(unit, i)
   if not a then return nil end
   return a[1], nil, "icon", a[2] or 0, nil, 10, a[3] or (now + 10), a[5] or "player", nil, nil, a[4]
 end
-function UnitDebuff() return nil end
+DEBUFFS = { player = {} } -- same format as AURAS
+function UnitDebuff(unit, i)
+  local a = DEBUFFS[unit] and DEBUFFS[unit][i]
+  if not a then return nil end
+  return a[1], nil, "icon", a[2] or 0, nil, 10, a[3] or (now + 10), a[5] or "player", nil, nil, a[4]
+end
+-- mana and target health for the Arcane rotation
+PLAYER_MANA, PLAYER_MANA_MAX, TARGET_HP = 30000, 30000, 100
+function UnitPower(u) if u == "player" then return PLAYER_MANA end return 0 end
+function UnitPowerMax(u) if u == "player" then return PLAYER_MANA_MAX end return 0 end
+function UnitHealth(u) if u == "target" then return TARGET_HP end return 100 end
+function UnitHealthMax() return 100 end
 function UnitExists(u) return u == "target" or raidEntry(u) ~= nil end
 function UnitIsDead() return false end
 function UnitIsDeadOrGhost(u) local e = raidEntry(u); return e and e.dead or false end
@@ -114,6 +137,7 @@ function UnitName(u)
 end
 function UnitIsUnit(a, b) return a == b or (UnitName(a) ~= nil and UnitName(a) == UnitName(b)) end
 function UnitGUID(u)
+  if u == "target" then return "GUID-" .. (TARGETNAME or "target") end
   local e = raidEntry(u)
   if e and e.name == "Kahuchan" then return "GUID-player" end
   return e and ("GUID-" .. e.name) or ("GUID-" .. u)
@@ -124,7 +148,7 @@ function UnitAffectingCombat() return INCOMBAT end
 function UnitCastingInfo() return nil end
 function UnitChannelInfo() return nil end
 function UnitDetailedThreatSituation() return false, 0, 10, 10 end
-function GetUnitSpeed() return 0 end
+function GetUnitSpeed() return MOVING and 7 or 0 end
 function InCombatLockdown() return INCOMBAT and true or false end
 function GetNumRaidMembers() return #RAID end
 function GetNumPartyMembers() return 0 end

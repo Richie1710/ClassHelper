@@ -407,6 +407,125 @@ PLAYER_CLASS, PLAYER_TALENTS, PLAYER_FORM, AURAS.player = nil, nil, nil, {}
 OUT[#OUT + 1] = "FLASK OK"
 '''
 
+# Arcane rotation: auto mode by talents, button set, cooldowns, gem/Evocation, Missile Barrage,
+# burn vs conserve (mana threshold and time-to-die estimate), movement, switching back to Fire.
+ARCANE = r'''
+local KR = MageHelperFrame
+local de = GetLocale() == "deDE"
+local function upd(n) for i = 1, (n or 8) do Tick(0.15) end end   -- 1.2 s: burn/conserve is re-decided every second
+local function reco() return FRAMES.MageHelperOneButton.currentKey end
+local function shown(k) return FRAMES["MageHelperButton_" .. k].__shown end
+local function macro(k) return FRAMES["MageHelperButton_" .. k].__attr.macrotext end
+local function S(id) return (GetSpellInfo(id)) end
+local AP, POM, MI, IV, EVO, BARR = S(12042), S(12043), S(55342), S(12472), S(12051), S(44781)
+local function state(mana, stacks)
+  PLAYER_MANA = mana
+  DEBUFFS.player = stacks > 0 and { { S(36032), stacks, nil, 36032 } } or {}
+end
+local function drain(hpPerSec, seconds) for i = 1, seconds / 0.15 do TARGET_HP = TARGET_HP - hpPerSec * 0.15; Tick(0.15) end end
+local function debug() return KR.debugInfo.__text end
+
+INCOMBAT, MOVING, AURAS.player, TARGETNAME, TARGET_HP = false, false, {}, "Dummy", 100
+PLAYER_CLASS, PLAYER_FORM, EQUIPPED, BAGS = nil, nil, {}, { [0] = { "|Hitem:33312|h[Mana Sapphire]|h" } }
+KNOWN[12472] = false
+check(MH.db.profile.rotationMode == "auto" and shown("lb") and not shown("ab"), "no talents: Fire")
+PLAYER_TALENTS = { 57, 3, 11 }
+FireEvent("PLAYER_TALENT_UPDATE"); upd()
+for _, k in ipairs({ "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop" }) do check(shown(k), "Arcane button shown: " .. k) end
+for _, k in ipairs({ "lb", "pyro", "fireball", "comb", "cd" }) do check(not shown(k), "Fire button hidden: " .. k) end
+check(not macro("ap"):find(IV, 1, true), "no Icy Veins in the AP macro while unknown")
+check(macro("gem"):find("/use item:33312", 1, true), "gem button uses the Mana Sapphire")
+KNOWN[12472] = nil; FireEvent("PLAYER_TALENT_UPDATE")
+check(macro("ap"):find("/cast " .. IV, 1, true), "Icy Veins joins the AP macro once known")
+
+-- cooldowns as soon as ready (in combat with a target)
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); state(30000, 0); upd()
+check(reco() == "pom", "Presence of Mind first: " .. tostring(reco()))
+COOLDOWNS[POM] = 100; upd(); check(reco() == "ap", "then Arcane Power")
+COOLDOWNS[AP] = 100; upd(); check(reco() == "ap", "AP on CD, Icy Veins ready: AP button (macro casts both)")
+COOLDOWNS[IV] = 100; upd(); check(reco() == "mirror", "then Mirror Image")
+COOLDOWNS[POM], COOLDOWNS[AP] = nil, nil
+EQUIPPED = { [1] = "|Hitem:51281|h[x]|h", [3] = "|Hitem:51155|h[x]|h", [5] = "|Hitem:50278|h[x]|h", [7] = "|Hitem:51282|h[x]|h" }
+upd(); check(reco() == "mirror", "T10 4-piece: Mirror Image before PoM/AP")
+EQUIPPED = {}
+for _, n in ipairs({ AP, POM, MI, IV, EVO }) do COOLDOWNS[n] = 100 end
+
+-- burn/conserve by mana threshold
+Slash("burn mana 35")
+check(MH.db.profile.arcaneBurnMode == "mana" and MH.db.profile.arcaneBurnMana == 35, "/mh burn mana 35")
+state(30000, 0); upd(); check(reco() == "ab", "full mana: Arcane Blast")
+state(30000, 4); upd(); check(reco() == "ab", "burn: Arcane Blast also at 4 stacks")
+AURAS.player = { { S(44401), 0, nil, 44401 } }; upd()
+check(reco() == "am", "Missile Barrage: Arcane Missiles"); AURAS.player = {}
+ITEM_COOLDOWNS[33312] = 60
+state(9900, 3); upd(); check(reco() == "am", "conserve (33% < 35%): 3 stacks -> Arcane Missiles")
+state(9900, 2); upd(); check(reco() == "ab", "conserve: Arcane Blast up to 3 stacks")
+state(11100, 3); upd(); check(reco() == "am", "hysteresis: 37% is not enough to burn again")
+state(12000, 3); upd(); check(reco() == "ab", "40%: burn again")
+
+-- Mana Gem only when the missing mana >= its yield; Evocation below 30% without stacks
+ITEM_COOLDOWNS[33312] = nil
+state(27000, 0); upd(); check(reco() == "ab", "3000 missing: no gem yet")
+state(26000, 0); upd(); check(reco() == "gem", "4000 missing: Mana Gem")
+ITEM_COOLDOWNS[33312] = 60; COOLDOWNS[EVO] = nil
+state(6000, 2); upd(); check(reco() == "abarr", "20% with stacks: drop them with Arcane Barrage first")
+state(6000, 0); upd(); check(reco() == "evo", "20% without stacks: Evocation")
+COOLDOWNS[EVO] = 100
+
+-- moving
+MOVING = true; state(20000, 0); upd(); check(reco() == "abarr", "moving: Arcane Barrage")
+COOLDOWNS[BARR] = 2; upd(); check(reco() == "fb_move", "moving, Barrage on CD: Fire Blast")
+MOVING, COOLDOWNS[BARR] = false, nil
+OUT[#OUT + 1] = "ARCANE INFO " .. KR.info.__text
+
+-- burn auto: time to die vs time to OOM (18000 mana, gem and Evocation on CD: about 25 s of burning)
+Slash("burn auto"); Slash("debug on")
+check(MH.db.profile.arcaneBurnMode == "auto" and MH.db.profile.arcaneBurnMana == 35, "/mh burn auto keeps the threshold")
+TARGETNAME, TARGET_HP = "Fast boss", 60; state(18000, 3); upd(4)
+check(reco() == "ab", "new target, estimate unreliable: mana threshold (60%) -> burn")
+check(debug():find(de and "unsicher" or "unreliable", 1, true), "debug line says why: " .. debug())
+drain(5, 6)   -- 5%/s: dies in ~6 s, the mana lasts longer
+check(reco() == "ab" and debug():find("TTD", 1, true), "fast kill: burn (" .. debug() .. ")")
+OUT[#OUT + 1] = "ARCANE DEBUG " .. debug()
+TARGETNAME, TARGET_HP = "Slow boss", 60; upd(2)
+check(reco() == "ab", "target change resets the samples: fallback burn")
+drain(0.5, 8) -- 0.5%/s: ~110 s left, the mana lasts ~25 s
+check(reco() == "am", "slow kill: conserve, 3 stacks -> Arcane Missiles (" .. debug() .. ")")
+OUT[#OUT + 1] = "ARCANE DEBUG " .. debug()
+drain(0, 5)   -- health stops dropping (immune phase): unreliable, back to the mana threshold
+check(reco() == "ab" and debug():find(de and "unsicher" or "unreliable", 1, true), "stalled health: fallback burn (" .. debug() .. ")")
+Slash("burn mana"); drain(0.5, 2)
+check(reco() == "ab", "mana mode ignores the estimate")
+
+-- switching the rotation: in combat only after the fight; Fire unchanged
+Slash("rota feuer")
+check(MH.db.profile.rotationMode == "fire" and shown("ab") and not shown("lb"), "in combat the buttons stay")
+check(reco() == "ab" or reco() == "am", "Arcane recommendations until the switch")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); upd()
+check(shown("lb") and shown("fireball") and not shown("ab") and not shown("gem"), "after combat: Fire buttons")
+AURAS.player = { { "Hot Streak", 0, nil, 48108 } }; upd()
+check(reco() == "pyro", "Fire rotation: Hot Streak -> Pyroblast"); AURAS.player = {}
+check(KR.info.__text:find("FB/min", 1, true), "Fire info line")
+Slash("rota arkan"); check(shown("ab") and not shown("lb"), "/mh rota arkan")
+Slash("rota auto"); check(shown("ab"), "auto with Arcane talents")
+PLAYER_TALENTS = { 0, 55, 16 }; FireEvent("ACTIVE_TALENT_GROUP_CHANGED"); check(shown("lb") and not shown("ab"), "spec switch to Fire")
+PLAYER_TALENTS = { 0, 17, 54 }; FireEvent("PLAYER_TALENT_UPDATE"); check(shown("lb"), "Frost uses Fire")
+Slash("rota"); Slash("burn"); Slash("rota bogus")
+
+-- options
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local a = o.args.arcane.args
+check(a.arcaneBurnMana.min == 10 and a.arcaneBurnMana.max == 90 and a.arcaneBurnMode.values.auto ~= nil, "Arcane options group")
+o.args.arcane.set({ "arcane", "arcaneBurnMana" }, 50); check(MH.db.profile.arcaneBurnMana == 50, "threshold via options")
+o.args.arcane.set({ "arcane", "arcaneBurnMode" }, "auto"); check(MH.db.profile.arcaneBurnMode == "auto", "burn mode via options")
+check(o.args.rotation.args.rotationMode.values().auto ~= nil, "rotation mode values")
+o.args.rotation.args.rotationMode.set({ "rotation", "rotationMode" }, "arcane"); check(shown("ab"), "rotation mode via options")
+Slash("help")
+Slash("debug off"); Slash("rota auto")
+PLAYER_TALENTS, DEBUFFS.player = nil, {}
+OUT[#OUT + 1] = "ARCANE OK"
+'''
+
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
 
 version, files = toc_files()
@@ -427,14 +546,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK)):
+        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "OPTIONS", "T9", "THEMES", "FLASK", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)

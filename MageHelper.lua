@@ -1,5 +1,5 @@
--- MageHelper v3.2 color themes, flask choice; Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
--- WotLK 3.3.5 Fire Mage helper: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
+-- MageHelper v3.3 Arcane rotation (burn/conserve with time-to-die estimate), auto Fire/Arcane by talents; v3.2 color themes, flask choice; Molten Armor T9 swap by item ID; Ace3 base (settings window, profiles); Focus Magic target picker; German + English client support
+-- WotLK 3.3.5 Fire and Arcane Mage helper. Fire: LB timing, Hot Streak/Pyro chain, Combustion prep, burst queue, Fireball/min, cast-gap warnings, buff checks, T9 Molten Armor prep and boss-mechanic Ice Block skips, 1s cast timing and Ice Block cancel helper, Sindragosa/Putricide/Blood Queen/Lady utility warnings plus raid test/debug report.
 
 local ADDON = "MageHelper"
 local MH = LibStub("AceAddon-3.0"):NewAddon(ADDON, "AceEvent-3.0", "AceTimer-3.0", "AceConsole-3.0")
@@ -24,6 +24,9 @@ local defaults = {
         buffMinimapX = -10,
         buffMinimapY = -112,
         combustionLB = 10,
+        rotationMode = "auto",    -- "auto" (talent tree with most points), "fire" or "arcane"
+        arcaneBurnMode = "auto",  -- "auto" (time to die vs. time to OOM, like SimC) or "mana" (threshold only)
+        arcaneBurnMana = 35,      -- burn while mana % >= this (mana mode, and auto while the estimate is unreliable)
         showMovementFireBlast = true,
         useGloves = true,
         buffBarShown = true,
@@ -304,6 +307,41 @@ local L_EN = {
     ["Debug-Zeile unter der Rota-Leiste"] = "Debug line below the rotation bar",
     ["Analysefenster öffnen"] = "Open analyzer window",
     ["MageHelper: Einstellungen sind im Kampf gesperrt."] = "MageHelper: settings are locked in combat.",
+    -- Arcane rotation
+    ["Arkan"] = "Arcane",
+    ["Feuer"] = "Fire",
+    ["Rota-Modus"] = "Rotation mode",
+    ["Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan oder Feuer, Frost nutzt Feuer). Die Buttons wechseln nur außerhalb des Kampfes."] = "Automatic: the talent tree with the most points decides (Arcane or Fire, Frost uses Fire). The buttons only switch out of combat.",
+    ["MageHelper: Rota = %s"] = "MageHelper: rotation = %s",
+    ["MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf."] = "MageHelper: In combat - the buttons switch after combat.",
+    ["/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)"] = "/mh rota auto|fire|arcane - Fire or Arcane rotation (auto = by talents)",
+    ["Burn oder Sparen"] = "Burn or conserve",
+    ["Automatisch (Zeit bis zum Tod gegen Mana)"] = "Automatic (time to die vs. mana)",
+    ["Nur nach Mana"] = "By mana only",
+    ["Burn ab Mana (%)"] = "Burn above mana (%)",
+    ["Burn: Arkanschlag auch mit 4 Stapeln. Sparen: Arkanschlag bis 3 Stapel, dann Arkane Geschosse.\n\nAutomatisch schätzt aus dem Lebensverlust des Ziels, wann es stirbt, und burnt, solange dein Mana (plus Manastein und Hervorrufung, wenn bereit) bis dahin reicht. Solange die Schätzung unsicher ist (zu wenig Daten, Ziel verliert kein Leben), gilt die Mana-Schwelle."] = "Burn: Arcane Blast, also at 4 stacks. Conserve: Arcane Blast up to 3 stacks, then Arcane Missiles.\n\nAutomatic estimates from the target's health loss when it will die and burns as long as your mana (plus Mana Gem and Evocation when ready) lasts until then. While the estimate is unreliable (too little data, target not losing health) the mana threshold applies.",
+    ["Mana-Schwelle"] = "mana threshold",
+    ["MageHelper: Burn-Modus = %s, Mana-Schwelle %d%%"] = "MageHelper: burn mode = %s, mana threshold %d%%",
+    ["/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"] = "/mh burn auto|mana [percent] - Arcane: burn/conserve automatic or by mana only",
+    ["%s bereit"] = "%s ready",
+    ["%s zuerst (T10: +18%% Schaden)"] = "%s first (T10: +18%% damage)",
+    ["Manastein: %d Mana fehlen"] = "Mana gem: %d mana missing",
+    ["%s: Mana %d%%"] = "%s: mana %d%%",
+    ["Stapel abbauen, dann %s"] = "Drop the stacks, then %s",
+    ["%s aktiv: %s"] = "%s up: %s",
+    ["Bewegung: %s"] = "Moving: %s",
+    ["Bewegung: %s CD %.1fs"] = "Moving: %s CD %.1fs",
+    ["Burn: %s"] = "Burn: %s",
+    ["Sparen: %s bis 3 Stapel"] = "Conserve: %s up to 3 stacks",
+    ["Sparen: 3 Stapel, dann %s"] = "Conserve: 3 stacks, then %s",
+    ["SPAREN"] = "CONSERVE",
+    ["Burn: TTD %.0fs, Mana reicht %.0fs"] = "Burn: TTD %.0fs, mana lasts %.0fs",
+    ["Sparen: TTD %.0fs, Mana reicht nur %.0fs"] = "Conserve: TTD %.0fs, mana lasts only %.0fs",
+    ["Mana %d%% / Schwelle %d%%"] = "mana %d%% / threshold %d%%",
+    ["Schätzung unsicher (%s), Mana %d%% / Schwelle %d%%"] = "estimate unreliable (%s), mana %d%% / threshold %d%%",
+    ["zu wenig Daten"] = "too little data",
+    ["Ziel verliert kein Leben"] = "target not losing health",
+    ["kein Ziel"] = "no target",
 }
 local useEnglish = GetLocale() ~= "deDE"
 local function L(s)
@@ -349,6 +387,15 @@ local spells = {
     molten = SpellName(43046, "Glühende Rüstung"),
     brilliance = SpellName(43002, "Arkane Brillanz"),
     focusMagic = SpellName(54646, "Fokusmagie"),
+    -- Arcane (max ranks, IDs checked on Wowhead WotLK)
+    ab = SpellName(42897, "Arkanschlag"),
+    am = SpellName(42846, "Arkane Geschosse"),
+    abarr = SpellName(44781, "Arkanbeschuss"),
+    ap = SpellName(12042, "Arkane Macht"),
+    pom = SpellName(12043, "Geistesgegenwart"),
+    iv = SpellName(12472, "Eisige Adern"),
+    evo = SpellName(12051, "Hervorrufung"),
+    mb = SpellName(44401, "Geschosssalve"),
 }
 
 local buffNames = {
@@ -502,13 +549,22 @@ local function SpellUsableNow(name)
     return SpellCooldownRemaining(name) <= 0.05
 end
 
+-- Remaining cooldown of an item (Mana Gem button), 0 when ready.
+function M.ItemCooldownRemaining(itemId)
+    local start, duration, enabled = GetItemCooldown(itemId)
+    if not start or enabled == 0 then return 999 end
+    if start == 0 or duration == 0 then return 0 end
+    return math.max((start + duration) - GetTime(), 0)
+end
+
 local function ButtonSpellCooldownRemaining(btn)
+    if btn and btn.itemId then return M.ItemCooldownRemaining(btn.itemId) end
     if not btn or not btn.spellName then return 0 end
     return SpellCooldownRemaining(btn.spellName)
 end
 
 local function ButtonUsableNow(btn)
-    if not btn or not btn.spellName then return true, 0 end
+    if not btn or (not btn.spellName and not btn.itemId) then return true, 0 end
     local remain = ButtonSpellCooldownRemaining(btn)
     return remain <= 0.05, remain
 end
@@ -1035,7 +1091,8 @@ end
 local function RebuildSpellMacros()
     if InCombatLockdown() then return end
     for _, btn in pairs(buttons) do
-        if not btn.customMacro and btn.spellName then SetMacro(btn, MakeMacro(btn.spellName)) end
+        if btn.macroBuilder then SetMacro(btn, btn.macroBuilder())
+        elseif not btn.customMacro and btn.spellName then SetMacro(btn, MakeMacro(btn.spellName)) end
     end
 end
 
@@ -1947,6 +2004,22 @@ local function CreateUI()
         b:SetPoint("TOPLEFT", KR, "TOPLEFT", x, -8)
         x = x + 53
     end
+    -- Arcane set (Ice Block, Invisibility, Counterspell and the Fire Blast move button are shared).
+    -- M.LayoutRota shows only the buttons of the active rotation.
+    for _, data in ipairs({
+        {"ab", "AB", spells.ab}, {"am", "AM", spells.am}, {"abarr", "ABarr", spells.abarr},
+        {"ap", "AP", spells.ap}, {"pom", "PoM", spells.pom}, {"mirror", "MI", spells.mirror},
+        {"evo", "Evo", spells.evo},
+    }) do
+        CreateSpellButton(KR, data[1], data[2], data[3], data[4])
+    end
+    buttons.ap.macroBuilder = M.ArcanePowerMacro -- Arcane Power + Icy Veins when known (off the GCD)
+    SetMacro(buttons.ap, M.ArcanePowerMacro())
+    local gem = CreateSpellButton(KR, "gem", "Gem", ItemName(M.MANA_GEM_ITEM),
+        "#showtooltip " .. ItemName(M.MANA_GEM_ITEM) .. "\n/use " .. ItemName(M.MANA_GEM_ITEM))
+    gem.spellName, gem.itemId = nil, M.MANA_GEM_ITEM
+    gem.icon:SetTexture((GetItemIcon and GetItemIcon(M.MANA_GEM_ITEM)) or "Interface\\Icons\\INV_Misc_Gem_Stone_01")
+    M.LayoutRota(M.DesiredRota())
 
     local ob = CreateOneButton(KR)
     ob:SetPoint("TOPRIGHT", KR, "TOPRIGHT", -10, -18)
@@ -2396,8 +2469,9 @@ end
 local function UpdateButtonCooldownVisuals()
     for _, b in pairs(buttons) do
         local remain = ButtonSpellCooldownRemaining(b)
-        if b.cooldown and b.spellName then
-            local start, duration, enabled = GetSpellCooldown(b.spellName)
+        if b.cooldown and (b.spellName or b.itemId) then
+            local start, duration
+            if b.itemId then start, duration = GetItemCooldown(b.itemId) else start, duration = GetSpellCooldown(b.spellName) end
             if start and duration and duration > 0 and remain > 0.05 then
                 b.cooldown:SetCooldown(start, duration)
                 b.cooldown:Show()
@@ -2527,6 +2601,351 @@ local function UpdateBuffBar()
     end
 end
 
+-- Emergencies and utility shared by every rotation: analyzer override (LK Invisibility, mandatory
+-- interrupts), Ice Block cancel, boss-cast and debuff Ice Block skips, ICC utility. filler = key of
+-- the rotation's filler (shown with a warning when Ice Block is on cooldown), moveKey = its instant
+-- for "move now". Returns nil when nothing applies.
+function M.EmergencyReco(filler, moveKey, utilType, utilNote, utilReady, utilCD)
+    local override = MageHelperAnalyzer_GetPriorityOverride and MageHelperAnalyzer_GetPriorityOverride()
+    local iceAura = cfg.iceCancelHelper and HasIceBlockAura()
+    local castSkipActive, castRemain, castName, castId, castIceReady, castIceCD, castData, castShouldBlock = ActiveIceblockCastSkip()
+    local skipActive, skipRemain, skipName, skipId, iceReady, iceCD = ActiveIceblockSkip()
+    if override then
+        return override.button or override.type or filler, true, override.reason or "Analyzer Override"
+    elseif iceAura then
+        return "ice", true, L("EISBLOCK ABBRECHEN / weiter DPS")
+    elseif castSkipActive and castShouldBlock and castIceReady then
+        return "ice", true, string.format(L("EISBLOCK JETZT: %s %.1fs"), castName or L("Boss-Cast"), castRemain or 0)
+    elseif castSkipActive and castShouldBlock and not castIceReady then
+        return filler, true, string.format(L("Eisblock CD! %s in %.1fs"), castName or L("Boss-Cast"), castRemain or 0)
+    elseif castSkipActive and castRemain <= ((cfg.iceBlockLead or 1.0) + 1.0) then
+        if buttons.ice then ButtonSetState(buttons.ice, "prep", 0.95) end
+        return filler, true, string.format(L("Eisblock gleich bereit halten: %.1fs"), castRemain or 0)
+    elseif skipActive and iceReady then
+        return "ice", true, string.format(L("EISBLOCK: %s"), skipName or L("Bossmechanik"))
+    elseif skipActive and not iceReady then
+        return filler, true, string.format(L("Eisblock CD! %s noch %.0fs"), skipName or L("Bossmechanik"), iceCD or 0)
+    elseif utilType == "ice" and utilReady then
+        return "ice", true, utilNote
+    elseif utilType == "ice" and not utilReady then
+        return filler, true, string.format(L("%s - Eisblock CD %.0fs"), utilNote or L("Eisblock nötig"), utilCD or 0)
+    elseif utilType == "stop" then
+        return "stop", true, utilNote
+    elseif utilType == "move" then
+        return moveKey, true, utilNote
+    end
+    return nil
+end
+
+-- =============================
+-- Arcane rotation
+-- =============================
+-- IDs checked on Wowhead WotLK: Arcane Blast 42897 (rank 4, 7% base mana, 2.5 s) and its stacking
+-- aura on the player 36032 (debuff, +15% damage and +175% Arcane Blast cost per stack, up to 4, gone
+-- after 6 s or another Arcane damage spell), Arcane Missiles 42846 (rank 13), Missile Barrage 44401,
+-- Arcane Barrage 44781 (rank 3), Arcane Power 12042, Presence of Mind 12043, Icy Veins 12472,
+-- Evocation 12051 (15% max mana every 2 s for 8 s), Mirror Image 55342, Mana Sapphire 33312
+-- (3330-3500 mana, 2 min cooldown). T10 4-piece (spell 70748): Mirror Image also gives +18% damage for 30 s.
+M.AB_STACK_IDS = { [36032] = true }
+M.AB_STACK_NAMES = SpellNames(36032, "Arkanschlag", "Arcane Blast")
+M.MB_IDS = { [44401] = true }
+M.MB_NAMES = SpellNames(44401, "Geschosssalve", "Missile Barrage")
+M.SPELL_ID = { ab = 42897, ap = 12042, pom = 12043, iv = 12472, evo = 12051, mirror = 55342, abarr = 44781 }
+M.MANA_GEM_ITEM = 33312
+M.MANA_GEM_YIELD = 3500       -- use the gem only when at least this much mana is missing (no waste)
+M.EVO_SHARE = 0.60            -- Evocation restores 4 x 15% of max mana
+M.EVO_BELOW = 0.30            -- Evocation below 30% mana
+M.AB_BASE_COST_FALLBACK = 229 -- 7% of a level 80 mage's base mana (3268), until the client reports it
+M.AB_STACK_COST = 1.75        -- each stack adds 175% of the base cost; the burn is costed at 4 stacks
+-- Bloodmage's Regalia (mage T10): 251 = 50275-50279, Sanctified 264 = 51155-51159, Sanctified 277 = 51280-51284
+M.T10_IDS = {}
+for _, first in ipairs({ 50275, 51155, 51280 }) do for id = first, first + 4 do M.T10_IDS[id] = true end end
+M.T10_SLOTS = { 1, 3, 5, 7, 10 }
+-- Time to die: health fraction of the target sampled every TTD_STEP s over the last TTD_WINDOW s.
+M.TTD_WINDOW, M.TTD_STEP, M.TTD_MIN_SAMPLES, M.TTD_MIN_SPAN = 12, 0.5, 6, 4
+M.TTD_MIN_RATE = 0.0005       -- slower than 0.05% health per second counts as "not dropping"
+M.TTD_STALL = 3               -- no health loss in the last 3 s = immune/phase: estimate unreliable
+M.BURN_EVAL = 1.0             -- burn/conserve is re-decided once per second ...
+M.BURN_HYST = 0.10            -- ... and in auto mode only flips with a 10% margin
+M.BURN_MANA_HYST = 3          -- mana mode: conserve -> burn needs threshold + 3 percentage points
+M.ROTA_SETS = {
+    fire = { "lb", "pyro", "fireball", "comb", "cd", "fb_move", "ice", "invis", "stop" },
+    arcane = { "ab", "am", "abarr", "ap", "pom", "mirror", "evo", "gem", "fb_move", "ice", "invis", "stop" },
+}
+M.ttdSamples, M.ttdGuid, M.ttdLastAt = {}, nil, -10
+M.burn, M.burnAt, M.burnWhy = nil, -10, ""
+M.arcane = {}
+
+function M.KnowsSpell(id)
+    if IsSpellKnown then return IsSpellKnown(id) and true or false end
+    local name = GetSpellInfo(id)
+    return name ~= nil and GetSpellInfo(name) ~= nil
+end
+
+-- Arcane Power button: Icy Veins rides along in the same macro when known (both are off the GCD).
+function M.ArcanePowerMacro()
+    local extra = M.KnowsSpell(M.SPELL_ID.iv) and { "/cast " .. spells.iv } or nil
+    return MakeMacro(spells.ap, nil, extra)
+end
+
+-- "fire" or "arcane": fixed by cfg.rotationMode, or by the talent tree with the most points
+-- (Arcane -> arcane; Fire, Frost, no talents -> fire).
+function M.DesiredRota()
+    local mode = cfg and cfg.rotationMode or "auto"
+    if mode == "fire" or mode == "arcane" then return mode end
+    local group = GetActiveTalentGroup and GetActiveTalentGroup(false, false) or nil
+    local best, most = 2, 0
+    for tab = 1, 3 do
+        local _, _, points = GetTalentTabInfo(tab, false, false, group)
+        if (points or 0) > most then best, most = tab, points end
+    end
+    return best == 1 and "arcane" or "fire"
+end
+
+-- Show the buttons of one rotation in a row and resize the bar. Secure buttons: out of combat only.
+function M.LayoutRota(rota)
+    local wanted = {}
+    for _, key in ipairs(M.ROTA_SETS[rota]) do wanted[key] = true end
+    for key, btn in pairs(buttons) do if not wanted[key] then btn:Hide() end end
+    local x = 8
+    for _, key in ipairs(M.ROTA_SETS[rota]) do
+        local btn = buttons[key]
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", KR, "TOPLEFT", x, -8)
+        btn:Show()
+        x = x + 53
+    end
+    KR:SetWidth(x + 95)
+    M.activeRota = rota
+    RebuildSpellMacros()
+end
+
+-- Re-evaluate the rotation (talents, setting, profile). In combat the switch waits for PLAYER_REGEN_ENABLED.
+function M.ApplyRotaMode()
+    local want = M.DesiredRota()
+    if want == M.activeRota then M.rotaPending = false; return true end
+    if InCombatLockdown() then M.rotaPending = true; return false end
+    M.rotaPending = false
+    M.LayoutRota(want)
+    return true
+end
+
+function M.RotaName(rota) return rota == "arcane" and L("Arkan") or L("Feuer") end
+
+function M.RotaModeText()
+    local mode = cfg.rotationMode or "auto"
+    if mode == "auto" then return string.format(L("Automatisch (%s)"), M.RotaName(M.DesiredRota())) end
+    return M.RotaName(mode)
+end
+
+function M.ArcaneBlastStacks()
+    local active, _, _, _, count = PlayerDebuffFull(M.AB_STACK_NAMES, M.AB_STACK_IDS)
+    if active then return math.max(count or 0, 1) end
+    -- some cores show the stacks as a buff: by ID only (the name equals the spell itself)
+    for i = 1, 40 do
+        local n, _, _, c, _, _, _, _, _, _, spellId = UnitBuff("player", i)
+        if not n then break end
+        if M.AB_STACK_IDS[spellId or 0] then return math.max(c or 0, 1) end
+    end
+    return 0
+end
+
+function M.T10Count()
+    local n = 0
+    for _, slot in ipairs(M.T10_SLOTS) do
+        if M.T10_IDS[ItemIdFromLink(GetInventoryItemLink("player", slot)) or 0] then n = n + 1 end
+    end
+    return n
+end
+
+-- Ready = known and off cooldown (SpellReady also treats "cooldown starts when the aura fades" as not ready).
+function M.KnownReady(key)
+    if not M.KnowsSpell(M.SPELL_ID[key]) then return false, 999 end
+    return SpellReady(spells[key])
+end
+
+-- Sample the target's (or boss1's) health; a new unit, a heal or a phase reset (health going up) start over.
+function M.SampleTargetHealth(now, targetOK)
+    local unit = targetOK and "target" or nil
+    if not unit and UnitExists("boss1") and UnitCanAttack("player", "boss1") and not UnitIsDead("boss1") then unit = "boss1" end
+    local guid = unit and UnitGUID(unit)
+    if guid ~= M.ttdGuid then wipe(M.ttdSamples); M.ttdGuid = guid; M.ttdLastAt = -10 end
+    if not unit or now - M.ttdLastAt < M.TTD_STEP then return end
+    local maxHp = UnitHealthMax(unit) or 0
+    if maxHp <= 0 then return end
+    local s = M.ttdSamples
+    local f = (UnitHealth(unit) or 0) / maxHp
+    if s[#s] and f > s[#s].f + 0.01 then wipe(s) end
+    s[#s + 1] = { t = now, f = f }
+    M.ttdLastAt = now
+    while s[1] and now - s[1].t > M.TTD_WINDOW do table.remove(s, 1) end
+end
+
+-- Seconds until the sampled unit dies (least-squares slope of the health fraction), or nil and a
+-- reason while the estimate is unreliable.
+function M.TimeToDie()
+    local s = M.ttdSamples
+    local n = #s
+    if not M.ttdGuid then return nil, L("kein Ziel") end
+    if n < M.TTD_MIN_SAMPLES or s[n].t - s[1].t < M.TTD_MIN_SPAN then return nil, L("zu wenig Daten") end
+    local mt, mf = 0, 0
+    for i = 1, n do mt = mt + s[i].t; mf = mf + s[i].f end
+    mt, mf = mt / n, mf / n
+    local num, den = 0, 0
+    for i = 1, n do num = num + (s[i].t - mt) * (s[i].f - mf); den = den + (s[i].t - mt) ^ 2 end
+    local rate = den > 0 and -num / den or 0
+    if rate < M.TTD_MIN_RATE then return nil, L("Ziel verliert kein Leben") end
+    for i = n - 1, 1, -1 do
+        if s[n].t - s[i].t >= M.TTD_STALL - 0.05 then
+            if s[n].f >= s[i].f then return nil, L("Ziel verliert kein Leben") end
+            break
+        end
+    end
+    return s[n].f / rate
+end
+
+-- Mana per second while burning: 4-stack Arcane Blast cost / cast time. GetSpellInfo (3.3.5:
+-- name, rank, icon, cost, isFunnel, powerType, castTime) gives the base cost, read at 0 stacks so
+-- it is the same whether or not the client adds the stack cost, and the hasted cast time.
+function M.BurnManaPerSecond(stacks)
+    local _, _, _, cost, _, _, castMs = GetSpellInfo(M.SPELL_ID.ab)
+    if stacks == 0 and cost and cost > 0 then M.abBaseCost = cost end
+    local base = M.abBaseCost or M.AB_BASE_COST_FALLBACK
+    local cast = math.max(((castMs and castMs > 0) and castMs or 2500) / 1000, 1.0)
+    return base * (1 + 4 * M.AB_STACK_COST) / cast
+end
+
+-- Burn or conserve. "mana": burn while mana % >= threshold. "auto": burn while the mana (+ Mana Gem
+-- and Evocation if ready) lasts at least until the target dies; mana threshold while unreliable.
+function M.UpdateBurn(now, A)
+    if M.burn ~= nil and now - M.burnAt < M.BURN_EVAL then return end
+    M.burnAt = now
+    local thr = cfg.arcaneBurnMana or 35
+    local ttd, why
+    A.ttd, A.oom, A.oomNoEvo = nil, nil, nil
+    if cfg.arcaneBurnMode ~= "mana" then
+        ttd, why = M.TimeToDie()
+        if ttd then
+            local mps = M.BurnManaPerSecond(A.stacks)
+            local gem = A.gemReady and M.MANA_GEM_YIELD or 0
+            local evo = A.evoReady and M.EVO_SHARE * A.maxMana or 0
+            A.ttd, A.oom, A.oomNoEvo = ttd, (A.mana + gem + evo) / mps, (A.mana + gem) / mps
+            local margin = M.burn and (1 - M.BURN_HYST) or (1 + M.BURN_HYST)
+            M.burn = A.oom >= ttd * margin
+            M.burnWhy = string.format(M.burn and L("Burn: TTD %.0fs, Mana reicht %.0fs") or L("Sparen: TTD %.0fs, Mana reicht nur %.0fs"), ttd, A.oom)
+            return
+        end
+    end
+    if M.burn then M.burn = A.manaPct >= thr else M.burn = A.manaPct >= thr + M.BURN_MANA_HYST end
+    if why then
+        M.burnWhy = string.format(L("Schätzung unsicher (%s), Mana %d%% / Schwelle %d%%"), why, A.manaPct, thr)
+    else
+        M.burnWhy = string.format(L("Mana %d%% / Schwelle %d%%"), A.manaPct, thr)
+    end
+end
+
+function M.ArcaneState(now, targetOK)
+    local A = M.arcane
+    A.stacks = M.ArcaneBlastStacks()
+    A.mana, A.maxMana = UnitPower("player", 0) or 0, UnitPowerMax("player", 0) or 0
+    if A.maxMana <= 0 then A.maxMana = 1 end
+    A.manaPct = math.floor(A.mana / A.maxMana * 100 + 0.5)
+    A.mb = HasBuff("player", M.MB_NAMES, M.MB_IDS)
+    A.apReady, A.apCD = M.KnownReady("ap")
+    A.ivReady = M.KnownReady("iv")
+    A.pomReady, A.pomCD = M.KnownReady("pom")
+    A.mirrorReady, A.mirrorCD = M.KnownReady("mirror")
+    A.evoReady, A.evoCD = M.KnownReady("evo")
+    A.gemReady = GetItemCount(M.MANA_GEM_ITEM) > 0 and M.ItemCooldownRemaining(M.MANA_GEM_ITEM) <= 0
+    A.abarrUsable, A.abarrCD = SpellUsableNow(spells.abarr), SpellCooldownRemaining(spells.abarr)
+    A.fireblastUsable, A.fireblastCD = SpellUsableNow(spells.fireblast), SpellCooldownRemaining(spells.fireblast)
+    A.cdsAllowed = targetOK and UnitAffectingCombat("player")
+    A.t10 = M.T10Count() >= 4
+    return A
+end
+
+-- Arcane priority model (after the shared emergencies in M.EmergencyReco; research: SimulationCraft 3.3.3):
+-- 1) Cooldowns as soon as they are ready (in combat, with a target; no waiting for trinket procs):
+--    with the T10 4-piece Mirror Image first (+18% damage for 30 s), then Presence of Mind, then
+--    Arcane Power (the button also casts Icy Veins if known; PoM and AP share a cooldown category,
+--    so PoM goes first), Mirror Image last without T10.
+-- 2) Mana Gem when the missing mana >= the gem's yield.
+-- 3) Moving: Arcane Barrage, then Fire Blast (placed above the casts and channels below, which
+--    can't be used while moving; it only replaces them).
+-- 4) Evocation below 30% mana without Arcane Blast stacks (with stacks: Arcane Barrage/Missiles
+--    first to drop them). Skipped while a reliable estimate says the mana lasts to the kill.
+-- 5) Arcane Missiles when Missile Barrage is up.
+-- 6) Burn: Arcane Blast, also at 4 stacks. Conserve: Arcane Blast up to 3 stacks, then Arcane Missiles.
+function M.ArcaneReco(A, moving)
+    local missing = A.maxMana - A.mana
+    local evoNeeded = not (A.ttd and A.oomNoEvo and A.oomNoEvo >= A.ttd)
+    if A.cdsAllowed and A.t10 and A.mirrorReady then
+        return "mirror", true, string.format(L("%s zuerst (T10: +18%% Schaden)"), spells.mirror)
+    elseif A.cdsAllowed and A.pomReady then
+        return "pom", true, string.format(L("%s bereit"), spells.pom)
+    elseif A.cdsAllowed and A.apReady then
+        return "ap", true, string.format(L("%s bereit"), spells.ap)
+    elseif A.cdsAllowed and A.ivReady then
+        return "ap", true, string.format(L("%s bereit"), spells.iv)
+    elseif A.cdsAllowed and A.mirrorReady then
+        return "mirror", true, string.format(L("%s bereit"), spells.mirror)
+    elseif A.gemReady and missing >= M.MANA_GEM_YIELD then
+        return "gem", true, string.format(L("Manastein: %d Mana fehlen"), missing)
+    elseif moving and A.abarrUsable then
+        return "abarr", false, string.format(L("Bewegung: %s"), spells.abarr)
+    elseif moving and cfg.showMovementFireBlast and A.fireblastUsable then
+        return "fb_move", false, string.format(L("Bewegung: %s"), spells.fireblast)
+    elseif moving then
+        return "abarr", false, string.format(L("Bewegung: %s CD %.1fs"), spells.abarr, A.abarrCD or 0)
+    elseif A.evoReady and A.manaPct < M.EVO_BELOW * 100 and evoNeeded then
+        if A.stacks == 0 then return "evo", true, string.format(L("%s: Mana %d%%"), spells.evo, A.manaPct) end
+        return A.abarrUsable and "abarr" or "am", false, string.format(L("Stapel abbauen, dann %s"), spells.evo)
+    elseif A.mb then
+        return "am", true, string.format(L("%s aktiv: %s"), spells.mb, spells.am)
+    elseif M.burn then
+        return "ab", false, string.format(L("Burn: %s"), spells.ab)
+    elseif A.stacks < 3 then
+        return "ab", false, string.format(L("Sparen: %s bis 3 Stapel"), spells.ab)
+    end
+    return "am", false, string.format(L("Sparen: 3 Stapel, dann %s"), spells.am)
+end
+
+function M.ArcaneCdHint(label, ready, cd)
+    if ready then return "  |cff33ff33" .. label .. "|r" end
+    if cd and cd < 999 then return "  " .. label .. " " .. FormatRemain(cd) end
+    return ""
+end
+
+function M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, utilCD)
+    local A = M.ArcaneState(now, targetOK)
+    M.SampleTargetHealth(now, targetOK)
+    M.UpdateBurn(now, A)
+    local reco, urgent, note = M.EmergencyReco("ab", "abarr", utilType, utilNote, utilReady, utilCD)
+    if not reco then reco, urgent, note = M.ArcaneReco(A, moving) end
+
+    MarkRecommended(reco, urgent)
+    NoteRecommendation(reco, note)
+    if reco == "stop" then UpdateAnalyzerIcon("interrupt") elseif reco == "invis" then UpdateAnalyzerIcon("invis") else UpdateAnalyzerIcon(nil) end
+    RefreshAnalyzerWindow()
+    if utilType == "warn" and buttons.stop then ButtonSetState(buttons.stop, "prep", 0.80) end
+
+    local stackColor = A.stacks >= 4 and "|cffff8020" or (A.stacks >= 3 and "|cffffff33" or "|cffcccccc")
+    local manaColor = A.manaPct >= 60 and "|cff33ff33" or (A.manaPct >= 30 and "|cffffff33" or "|cffff3333")
+    local burnText = M.burn and "|cffff5050BURN|r" or ("|cff66ccff" .. L("SPAREN") .. "|r")
+    local mbText = A.mb and "  |cffff40ffMB!|r" or ""
+    local cds = M.ArcaneCdHint("AP", A.apReady, A.apCD) .. M.ArcaneCdHint("PoM", A.pomReady, A.pomCD)
+        .. M.ArcaneCdHint("MI", A.mirrorReady, A.mirrorCD) .. M.ArcaneCdHint("Evo", A.evoReady, A.evoCD)
+    local gapText = gapActive and " |cffff3333CAST-GAP!|r" or ""
+    KR.info:SetText(string.format("AB: %s%d/4|r  Mana: %s%d%%|r  %s%s%s  %s%s", stackColor, A.stacks, manaColor, A.manaPct, burnText, mbText, cds, note or "", gapText))
+    if KR.debugInfo then
+        if cfg.debugMode then
+            KR.debugInfo:SetText(string.format("DBG reco=%s reason=%s | %s | Util=%s", tostring(reco), tostring(note), M.burnWhy or "", tostring(utilType or "-")))
+        else
+            KR.debugInfo:SetText("")
+        end
+    end
+end
+
 local function UpdateDisplay()
     UpdateBuffBar()
     UpdateButtonCooldownVisuals()
@@ -2567,6 +2986,11 @@ local function UpdateDisplay()
     end
     if gapActive then KR.gap:Show() else KR.gap:Hide() end
 
+    if M.activeRota == "arcane" then
+        M.UpdateArcane(now, targetOK, moving, utilType, utilNote, utilReady, utilCD)
+        return
+    end
+
     -- Priority model v1.8:
     -- 0) Boss utility skip with Ice Block overrides DPS rotation when configured debuffs are on you.
     -- 1) Hot Streak/Pyro chain is always above LB refresh. If LB has exploded and Hot Streak is active, Pyro first, then LB.
@@ -2575,33 +2999,10 @@ local function UpdateDisplay()
     --    in focus before returning to Fireball spam, so burst pieces do not fall out of sight.
     -- 4) Movement mode only replaces Fireball filler, not Pyro/LB emergencies.
     -- 5) v1.9: LB and Fire Blast are only shown as clickable when their cooldown/GCD is really ready.
-    local override = MageHelperAnalyzer_GetPriorityOverride and MageHelperAnalyzer_GetPriorityOverride()
-    local iceAura = cfg.iceCancelHelper and HasIceBlockAura()
-    local castSkipActive, castRemain, castName, castId, castIceReady, castIceCD, castData, castShouldBlock = ActiveIceblockCastSkip()
-    local skipActive, skipRemain, skipName, skipId, iceReady, iceCD = ActiveIceblockSkip()
-    if override then
-        reco, urgent, note = override.button or override.type or "fireball", true, override.reason or "Analyzer Override"
-    elseif iceAura then
-        reco, urgent, note = "ice", true, L("EISBLOCK ABBRECHEN / weiter DPS")
-    elseif castSkipActive and castShouldBlock and castIceReady then
-        reco, urgent, note = "ice", true, string.format(L("EISBLOCK JETZT: %s %.1fs"), castName or L("Boss-Cast"), castRemain or 0)
-    elseif castSkipActive and castShouldBlock and not castIceReady then
-        reco, urgent, note = "fireball", true, string.format(L("Eisblock CD! %s in %.1fs"), castName or L("Boss-Cast"), castRemain or 0)
-    elseif castSkipActive and castRemain <= ((cfg.iceBlockLead or 1.0) + 1.0) then
-        reco, urgent, note = "fireball", true, string.format(L("Eisblock gleich bereit halten: %.1fs"), castRemain or 0)
-        if buttons.ice then ButtonSetState(buttons.ice, "prep", 0.95) end
-    elseif skipActive and iceReady then
-        reco, urgent, note = "ice", true, string.format(L("EISBLOCK: %s"), skipName or L("Bossmechanik"))
-    elseif skipActive and not iceReady then
-        reco, urgent, note = "fireball", true, string.format(L("Eisblock CD! %s noch %.0fs"), skipName or L("Bossmechanik"), iceCD or 0)
-    elseif utilType == "ice" and utilReady then
-        reco, urgent, note = "ice", true, utilNote
-    elseif utilType == "ice" and not utilReady then
-        reco, urgent, note = "fireball", true, string.format(L("%s - Eisblock CD %.0fs"), utilNote or L("Eisblock nötig"), utilCD or 0)
-    elseif utilType == "stop" then
-        reco, urgent, note = "stop", true, utilNote
-    elseif utilType == "move" then
-        reco, urgent, note = "fb_move", true, utilNote
+    -- Emergencies (analyzer override, Ice Block cancel/skips, ICC utility) are shared with Arcane: M.EmergencyReco.
+    local eReco, eUrgent, eNote = M.EmergencyReco("fireball", "fb_move", utilType, utilNote, utilReady, utilCD)
+    if eReco then
+        reco, urgent, note = eReco, eUrgent, eNote
     elseif hot then
         reco, urgent, note = "pyro", true, (targetOK and lbRemain <= 0) and L("Pyro zuerst, danach LB neu setzen") or L("Pyro-Kette: Hot Streak sofort nutzen")
     elseif targetOK and lbRemain <= 0 and lbUsable then
@@ -2682,6 +3083,8 @@ end
 
 function KR:PLAYER_REGEN_ENABLED()
     RefreshOneButtonAfterCombat()
+    if M.rotaPending then M.ApplyRotaMode() end
+    RebuildSpellMacros() -- Icy Veins learned/unlearned in combat: Arcane Power macro
     if chr.moltenRestorePending then RestoreAfterMolten() end
     if fmPendingAfterCombat then
         RefreshFocusMagicButton()
@@ -2760,6 +3163,10 @@ function KR:UNIT_SPELLCAST_SUCCEEDED(unit, spell)
 end
 
 function KR:INSPECT_TALENT_READY() OnFMInspectReady() end
+-- Talents or spec changed: auto rotation mode may switch (out of combat), Icy Veins may be new.
+function KR:PLAYER_TALENT_UPDATE() M.ApplyRotaMode(); RebuildSpellMacros() end
+KR.ACTIVE_TALENT_GROUP_CHANGED = KR.PLAYER_TALENT_UPDATE
+KR.CHARACTER_POINTS_CHANGED = KR.PLAYER_TALENT_UPDATE
 function KR:UNIT_SPELLCAST_INTERRUPTED(unit) if unit == "player" then lastCastEnd = GetTime() end end
 function KR:UNIT_SPELLCAST_FAILED(unit) if unit == "player" then lastCastEnd = GetTime() end end
 function KR:PLAYER_DEAD()
@@ -2906,6 +3313,23 @@ local function HandleSlash(msg)
         end
     elseif cmd == "config" or cmd == "options" or cmd == "optionen" then
         MH:OpenOptions()
+    elseif cmd == "rota" or cmd == "rotation" then
+        local aliases = { auto = "auto", fire = "fire", feuer = "fire", arcane = "arcane", arkan = "arcane" }
+        local mode = aliases[string.lower(arg or "")]
+        if mode then
+            cfg.rotationMode = mode
+            if not M.ApplyRotaMode() then print(L("MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
+        end
+        print(string.format(L("MageHelper: Rota = %s"), M.RotaModeText()))
+        if not mode then print(L("/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)")) end
+    elseif cmd == "burn" then
+        local sub, pct = string.match(string.lower(arg or ""), "^(%a*)%s*(%d*)")
+        if sub == "auto" or sub == "mana" then cfg.arcaneBurnMode = sub end
+        pct = tonumber(pct)
+        if pct then cfg.arcaneBurnMana = math.max(10, math.min(90, pct)) end
+        M.burn = nil -- decide again with the new setting
+        print(string.format(L("MageHelper: Burn-Modus = %s, Mana-Schwelle %d%%"), cfg.arcaneBurnMode == "mana" and L("Nur nach Mana") or L("Automatisch (Zeit bis zum Tod gegen Mana)"), cfg.arcaneBurnMana))
+        if sub ~= "auto" and sub ~= "mana" and not pct then print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana")) end
     elseif cmd == "lang" or cmd == "sprache" then
         local sub = string.lower(arg or "")
         if sub == "de" or sub == "en" or sub == "auto" then
@@ -2943,6 +3367,8 @@ local function HandleSlash(msg)
         print(L("/mh lang auto|de|en - Sprache (auto = Client-Sprache)"))
         print(L("/mh theme standard|rosa|blau|rot - Farbschema der Leisten und Fenster"))
         print(L("/mh flask auto|frost|rage|stone|mojo|resi|any - welche Flask die Buff-Leiste erwartet"))
+        print(L("/mh rota auto|feuer|arkan - Feuer- oder Arkan-Rota (auto = nach Talenten)"))
+        print(L("/mh burn auto|mana [Prozent] - Arkan: Burn/Sparen automatisch oder nur nach Mana"))
     end
 end
 
@@ -3019,12 +3445,28 @@ local function SetupOptions(db)
                     set = function(_, v) SetFlaskChoice(v) end },
             } },
             rotation = { type = "group", name = L("Rotation"), order = 2, get = get, set = set, args = {
+                rotationMode = { type = "select", name = L("Rota-Modus"), order = 0,
+                    desc = L("Automatisch: der Talentbaum mit den meisten Punkten entscheidet (Arkan oder Feuer, Frost nutzt Feuer). Die Buttons wechseln nur außerhalb des Kampfes."),
+                    values = function()
+                        return { auto = string.format(L("Automatisch (%s)"), M.RotaName(M.DesiredRota())), fire = L("Feuer"), arcane = L("Arkan") }
+                    end,
+                    set = function(_, v)
+                        cfg.rotationMode = v
+                        if not M.ApplyRotaMode() then print(L("MageHelper: Im Kampf - die Buttons wechseln nach dem Kampf.")) end
+                    end },
                 combustionLB = range(L("LB-Restzeit für Einäschern (Sekunden)"), 1, 0, 12, 1),
                 showMovementFireBlast = toggle(L("Feuerschlag in Bewegung vorschlagen"), 2),
                 useGloves = toggle(L("Handschuhe (/use 10) in den Spell-Buttons"), 3, function(_, v)
                     if inCombat() then return end
                     cfg.useGloves = v; RebuildSpellMacros()
                 end),
+            } },
+            arcane = { type = "group", name = L("Arkan"), order = 2.5, get = get, set = function(info, v) cfg[info[#info]] = v; M.burn = nil end, args = {
+                help = { type = "description", order = 1, fontSize = "medium",
+                    name = L("Burn: Arkanschlag auch mit 4 Stapeln. Sparen: Arkanschlag bis 3 Stapel, dann Arkane Geschosse.\n\nAutomatisch schätzt aus dem Lebensverlust des Ziels, wann es stirbt, und burnt, solange dein Mana (plus Manastein und Hervorrufung, wenn bereit) bis dahin reicht. Solange die Schätzung unsicher ist (zu wenig Daten, Ziel verliert kein Leben), gilt die Mana-Schwelle.") },
+                arcaneBurnMode = { type = "select", name = L("Burn oder Sparen"), order = 2,
+                    values = { auto = L("Automatisch (Zeit bis zum Tod gegen Mana)"), mana = L("Nur nach Mana") } },
+                arcaneBurnMana = range(L("Burn ab Mana (%)"), 3, 10, 90, 1),
             } },
             bosses = { type = "group", name = L("Boss-Mechaniken"), order = 3, get = get, set = set, args = {
                 bossSkips = toggle(L("Eisblock bei Boss-Mechaniken (Stechende Seuche, Kochendes Blut, Schwärmende Schatten)"), 1),
@@ -3095,6 +3537,8 @@ function MH:ApplyProfile()
         analyzerButton:SetPoint("TOPRIGHT", Minimap, "BOTTOMRIGHT", cfg.analyzerIconX or -10, cfg.analyzerIconY or -144)
     end
     if not cfg.debugMode and KR.debugInfo then KR.debugInfo:SetText("") end
+    M.burn = nil
+    M.ApplyRotaMode()
     RebuildSpellMacros()
     ApplyTheme()
 end
@@ -3117,7 +3561,8 @@ function MH:OnInitialize()
     self:RegisterChatCommand("magehelper", HandleSlash)
 end
 
-local EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_DEAD", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED", "INSPECT_TALENT_READY" }
+local EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_DEAD", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED", "INSPECT_TALENT_READY",
+    "PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED" }
 
 function MH:OnEnable()
     CreateUI()
@@ -3130,6 +3575,7 @@ function MH:OnEnable()
     -- After a fresh login the equipment may not be readable yet: tidy the T9 swap a bit later.
     self:ScheduleTimer(function()
         CleanSwap(chr.moltenRestorePending)
+        M.ApplyRotaMode() -- talents may not have been readable at login
         if chr.moltenRestorePending then RestoreAfterMolten() end -- cast in combat before a reload
     end, 5)
     KR:SetScript("OnUpdate", PulseRecommendationButtons) -- glow pulse every frame
