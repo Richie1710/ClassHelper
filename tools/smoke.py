@@ -1677,6 +1677,124 @@ check(#ERRORS == 0, "no Lua errors")
 OUT[#OUT + 1] = "RETLOGIN OK"
 '''
 
+# Retribution priority (M.PalRetReco): seal, Avenging Wrath (+ trinkets, marker/Forbearance), the
+# SimC order, Consecration TTD, Hammer of Wrath, Art of War, wait tolerance, range, AoE, RF warning.
+RET_ROTA = r'''
+local function reco() return M.palReco end
+local function state(k) return M.buttons[k].state end
+local function info() return ClassHelperFrame.info.__text end
+local DE = GetLocale() == "deDE"
+local AW, JOW, CS, DS, CONS, HOW, EXO, HW, PLEA = 31884, 53408, 35395, 53385, 48819, 48806, 48801, 48817, 54428
+local SOV = { S(31801), 0, 0, 31801 }
+local function auras(...) AURAS.player = { SOV, ... } end
+local function cds(t) COOLDOWNS, COOLDOWN_DUR = {}, {}; for id, left in pairs(t) do COOLDOWNS[S(id)] = left end end
+local guidN = 0
+local function newTarget(hp) guidN = guidN + 1; TARGETGUID = "GUID-ret" .. guidN; TARGET_HP = hp or 100; FireEvent("PLAYER_TARGET_CHANGED") end
+check(M.activeRota == "ret", "Ret mode")
+-- options
+local o = opts()
+check(o.args.palret and o.args.palret.hidden() == false and o.args.palret.args.palRetWait.max == 1, "Ret options group with the wait tolerance")
+check(MH.db.profile.palRetWait == 0.4, "wait tolerance default 0.4 s")
+check(type(o.args.palret.args.trinkets.name()) == "string", "trinket note")
+-- 1) seal
+INCOMBAT = false; AURAS.player = {}; cds({}); newTarget(); upd()
+check(reco() == "seal" and state("seal") == "urgent", "no seal: seal, urgent: " .. tostring(reco()))
+check(info():find(DE and "Kein Siegel" or "No seal", 1, true), "no-seal note: " .. info())
+AURAS.player = { { S(21084), 0, 0, 21084 } }; upd()
+check(reco() == "seal" and state("seal") == "glow", "another seal: wanted seal, not urgent")
+-- 2) out of combat with a target: no Avenging Wrath, Judgement opens
+auras(); upd()
+check(reco() == "judge", "out of combat: Judgement first, no AW: " .. tostring(reco()))
+NOTARGET = true; upd(); check(reco() == nil, "no target: nothing"); NOTARGET = nil
+-- Avenging Wrath in combat
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd()
+check(reco() == "aw" and state("aw") == "urgent", "in combat: Avenging Wrath, urgent: " .. tostring(reco()))
+check(macro("aw"):find("/cast " .. S(AW), 1, true) and not macro("aw"):find("/use 1", 1, true), "AW macro without on-use trinkets: " .. macro("aw"))
+-- Avenging Wrath blocked: fresh Forbearance (no AW Forbearance since 3.0.4), its hidden marker as buff or debuff
+DEBUFFS.player = { { S(25771), 0, GetTime() + 110, 25771 } }; upd()
+check(reco() == "judge", "Forbearance < 30 s old blocks AW: " .. tostring(reco()))
+DEBUFFS.player = { { S(25771), 0, GetTime() + 60, 25771 } }; upd()
+check(reco() == "aw", "older Forbearance: AW allowed")
+DEBUFFS.player = { { "Avenging Wrath Marker", 0, GetTime() + 20, 61987 } }; upd()
+check(reco() == "judge", "AW marker (debuff) blocks AW")
+DEBUFFS.player = {}; auras({ "x", 0, GetTime() + 20, 61987 }); upd()
+check(reco() == "judge", "AW marker (buff) blocks AW")
+auras(); USABLE[S(AW)] = false; upd(); check(reco() == "judge", "AW not usable: skipped"); USABLE[S(AW)] = nil
+-- 3) order Judgement > CS > DS > Consecration > HoW > Exorcism (AoW) > Plea
+cds({ [AW] = 100 }); upd(); check(reco() == "judge", "AW on cooldown: Judgement")
+cds({ [AW] = 100, [JOW] = 5 }); upd(); check(reco() == "cs", "Judgement on cd: Crusader Strike: " .. tostring(reco()))
+cds({ [AW] = 100, [JOW] = 5, [CS] = 3 }); upd(); check(reco() == "dstorm", "then Divine Storm")
+cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6 }); upd(); check(reco() == "cons", "then Consecration (TTD unknown)")
+cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6 }); upd(); check(reco() == "plea", "HoW above 20 %, no AoW: Divine Plea: " .. tostring(reco()))
+auras({ S(PLEA), 0, GetTime() + 10, PLEA }); upd(); check(reco() == nil, "Divine Plea active: nothing")
+auras({ S(59578), 0, GetTime() + 10, 59578 }); upd(); check(reco() == "exo", "The Art of War: Exorcism: " .. tostring(reco()))
+check(info():find(S(59578), 1, true), "AoW note: " .. info())
+auras({ S(53489), 0, GetTime() + 10, 53489 }); upd(); check(reco() == "exo", "Art of War rank 1: Exorcism")
+auras(); cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6, [PLEA] = 50 }); upd()
+check(reco() == nil, "everything on cooldown: nothing")
+-- Hammer of Wrath at 20 % and during Avenging Wrath (IsUsableSpell decides)
+TARGET_HP = 20; upd(); check(reco() == "how", "target at 20 %: Hammer of Wrath: " .. tostring(reco()))
+TARGET_HP = 50; auras({ S(AW), 0, GetTime() + 15, AW }); upd(); check(reco() == "how", "Avenging Wrath up: Hammer of Wrath")
+USABLE[S(HOW)] = false; upd(); check(reco() == nil, "HoW not usable (3.3.5 core: only below 20 %): skipped"); USABLE[S(HOW)] = nil
+auras(); upd(); check(reco() == nil, "no AW, 50 %: no HoW")
+-- Consecration needs time to die >= 6 s
+cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [HOW] = 6, [PLEA] = 50 })
+newTarget(40)
+for i = 1, 36 do TARGET_HP = math.max(1, 40 - i * 1); Tick(0.15) end
+check(reco() == nil, "target dies in < 6 s: no Consecration: " .. tostring(reco()))
+newTarget(90)
+for i = 1, 36 do TARGET_HP = 90 - i * 0.05; Tick(0.15) end
+check(reco() == "cons", "target lives long: Consecration: " .. tostring(reco()))
+-- 4) wait tolerance: a higher ability ready within 0.4 s keeps the glow
+newTarget(); cds({ [AW] = 100 }); COOLDOWNS[S(JOW)], COOLDOWN_DUR[S(JOW)] = 0.3, 8; upd()
+check(reco() == "judge" and state("judge") == "prep", "Judgement ready in 0.3 s: stays (blue): " .. tostring(reco()) .. " " .. tostring(state("judge")))
+COOLDOWNS[S(JOW)] = 0.6; upd(); check(reco() == "cs", "Judgement 0.6 s away: Crusader Strike")
+MH.db.profile.palRetWait = 0; COOLDOWNS[S(JOW)] = 0.3; upd(); check(reco() == "cs", "tolerance 0: Crusader Strike")
+MH.db.profile.palRetWait = 1; COOLDOWNS[S(JOW)] = 0.9; upd(); check(reco() == "judge", "tolerance 1 s: Judgement")
+o.args.palret.set({ "palret", "palRetWait" }, 0.4); check(MH.db.profile.palRetWait == 0.4, "set via options")
+cds({ [AW] = 100, [JOW] = 1.2 }); upd(); check(reco() == "judge", "only the GCD running: counts as ready")
+FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", S(JOW)); upd(1)
+check(reco() == "cs", "right after the cast (client shows only the GCD): not Judgement again: " .. tostring(reco()))
+Tick(2); cds({ [AW] = 100 })
+-- 5) melee range
+RANGE.target = 0; cds({ [AW] = 100, [PLEA] = 50 }); upd()
+check(reco() == nil and info():find(DE and "Nahkampfreichweite" or "melee range", 1, true), "out of range: nothing, note: " .. info())
+RANGE.target = nil; upd(); check(reco() == "judge", "back in range")
+-- 6) trinkets ride on the AW button
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")
+EQUIPPED[13] = "|Hitem:50343|h[x]|h"; EQUIPPED[14] = "|Hitem:50355|h[x]|h"; ITEM_USE[50343] = "Use"
+FireEvent("UNIT_INVENTORY_CHANGED", "player"); upd()
+check(macro("aw"):find("/use 13", 1, true) and not macro("aw"):find("/use 14", 1, true), "AW macro uses the on-use trinket only: " .. macro("aw"))
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED"); upd()
+check(reco() == "aw" and state("aw") == "urgent", "AW on cooldown but trinket ready: AW button: " .. tostring(reco()))
+check(info():find(DE and "Schmuckst" or "Trinket ready", 1, true), "trinket note: " .. info())
+SLOT_COOLDOWNS[13] = 60; upd(); check(reco() == "judge", "trinket on cooldown too: Judgement")
+-- 7) AoE mode: DS > Consecration > Holy Wrath (undead/demon) > CS > HoW > Judgement > Exorcism
+Slash("aoe an"); cds({ [AW] = 100 }); upd()
+check(reco() == "sealaoe" and state("sealaoe") == "glow", "AoE mode with Seal of Vengeance: Seal of Command, not urgent: " .. tostring(reco()))
+AURAS.player = { { S(20375), 0, 0, 20375 } }; upd(); check(reco() == "dstorm", "AoE: Divine Storm first: " .. tostring(reco()))
+cds({ [AW] = 100, [DS] = 6 }); upd(); check(reco() == "cons", "AoE: then Consecration")
+cds({ [AW] = 100, [DS] = 6, [CONS] = 6 }); upd(); check(reco() == "cs", "AoE vs humanoid: no Holy Wrath, Crusader Strike")
+TARGET_TYPE = { "Untoter", "Undead" }; upd(); check(reco() == "hwrath", "AoE vs undead: Holy Wrath: " .. tostring(reco()))
+TARGET_TYPE = { "D\195\164mon", "Demon" }; upd(); check(reco() == "hwrath", "AoE vs demon: Holy Wrath")
+TARGET_TYPE = { "Wildtier", "Beast" }; upd(); check(reco() == "cs", "AoE vs beast: no Holy Wrath")
+TARGET_TYPE = { "Untoter", "Undead" }; Slash("aoe aus"); auras(); cds({ [AW] = 100, [JOW] = 5, [CS] = 3, [DS] = 6, [CONS] = 6 }); upd()
+check(reco() == "plea", "single target vs undead: no Holy Wrath: " .. tostring(reco()))
+TARGET_TYPE = nil
+cds({ [AW] = 100, [DS] = 6, [CONS] = 6, [CS] = 3 }); Slash("aoe an"); AURAS.player = { { S(20375), 0, 0, 20375 } }; upd()
+check(reco() == "judge", "AoE: Judgement after CS and HoW: " .. tostring(reco()))
+Slash("aoe aus"); auras()
+-- 8) Righteous Fury in Ret: warning, unless PallyPower wants it
+auras({ S(25780), 0, nil, 25780 }); upd()
+check(info():find(DE and "nicht gewünscht" or "not wanted", 1, true), "RF active in Ret: warning")
+PallyPower = { opt = { seal = 0, rf = true } }; upd()
+check(not info():find(DE and "nicht gewünscht" or "not wanted", 1, true), "PallyPower rf = true: no warning")
+PallyPower = nil; auras(); upd()
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); EQUIPPED = {}; SLOT_COOLDOWNS = {}; ITEM_USE = {}; cds({}); AURAS.player = {}; upd()
+check(#ERRORS == 0, "no Lua errors")
+OUT[#OUT + 1] = "RET_ROTA OK"
+'''
+
 # A class without a module (Warrior): loads, shared parts only, nothing mage.
 OTHERCLASS = r'''
 upd()
@@ -1695,7 +1813,7 @@ OUT[#OUT + 1] = "OTHERCLASS OK"
 
 CLASS_RUNS = (
     ("PALADIN", "{ 5, 51, 15 }", (("paladin_login", PALADIN_LOGIN), ("pallypower", PALLYPOWER))),
-    ("PALADIN", "{ 5, 11, 55 }", (("retlogin", RETLOGIN),)),
+    ("PALADIN", "{ 5, 11, 55 }", (("retlogin", RETLOGIN), ("ret_rota", RET_ROTA))),
     ("WARRIOR", "{ 5, 51, 15 }", (("otherclass", OTHERCLASS),)),
 )
 
@@ -1704,7 +1822,7 @@ GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|g
 version, files = toc_files()
 failed = False
 PREFIXES = ("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS",
-            "PALADIN_LOGIN", "PALLYPOWER", "RETLOGIN", "OTHERCLASS", "|cffff7d0aClassHelper v")
+            "PALADIN_LOGIN", "PALLYPOWER", "RETLOGIN", "RET_ROTA", "OTHERCLASS", "|cffff7d0aClassHelper v")
 MAGE_PARTS = (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION), ("teargas", TEARGAS))
 
 

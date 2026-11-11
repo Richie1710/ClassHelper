@@ -64,6 +64,7 @@ local SPELLS = {
   [31884]={"Zornige Vergeltung","Avenging Wrath"}, [35395]={"Kreuzfahrersto\195\159","Crusader Strike"},
   [53385]={"G\195\182ttlicher Sturm","Divine Storm"}, [48801]={"Exorzismus","Exorcism"}, [48817]={"Heiliger Zorn","Holy Wrath"},
   [59578]={"Die Kunst des Krieges","The Art of War"}, [53489]={"Die Kunst des Krieges","The Art of War"},
+  [61987]={"Zornige Vergeltung","Avenging Wrath Marker"}, -- hidden marker (German name unknown)
   [53758]={"Fl\195\164schchen des Steinbluts","Flask of Stoneblood"}, [53760]={"Fl\195\164schchen des endlosen Zorns","Flask of Endless Rage"},
 }
 function GetLocale() return LOCALE end
@@ -80,7 +81,14 @@ function GetTime() return now end
 -- COOLDOWNS[spell name] / ITEM_COOLDOWNS[item ID] = seconds left (set by the test; GetTime() moves on)
 COOLDOWNS, ITEM_COOLDOWNS = {}, {}
 local function cd(left) if left and left > 0 then return now, left, 1 end return 0, 0, 1 end
-function GetSpellCooldown(name) return cd(COOLDOWNS[name]) end
+-- COOLDOWN_DUR[spell name] = full duration of that cooldown (else the remaining time is the
+-- duration, and a duration <= 1.5 s reads as the GCD), so a long cooldown can have little left
+COOLDOWN_DUR = {}
+function GetSpellCooldown(name)
+  local left, dur = COOLDOWNS[name], COOLDOWN_DUR[name]
+  if left and left > 0 and dur and dur > left then return now - (dur - left), dur, 1 end
+  return cd(left)
+end
 function GetItemCooldown(id) return cd(ITEM_COOLDOWNS[id]) end
 -- KNOWN[spellId] = false makes a spell unknown (default: every spell is known)
 KNOWN = {}
@@ -181,6 +189,13 @@ end
 RANGE, USABLE = {}, {}
 function IsSpellInRange(spell, unit) if not UnitExists(unit) then return nil end return RANGE[unit] or 1 end
 function IsUsableSpell(spell) if USABLE[spell] == false then return nil, 1 end return 1, nil end
+-- creature type of the target, localized like the client: TARGET_TYPE = { "Untoter", "Undead" } (default Humanoid)
+TARGET_TYPE = nil
+function UnitCreatureType(u)
+  if u ~= "target" or not UnitExists("target") then return nil end
+  local t = TARGET_TYPE or { "Humanoid", "Humanoid" }
+  return (LOCALE == "deDE") and t[1] or t[2]
+end
 -- mana and target health for the Arcane rotation
 PLAYER_MANA, PLAYER_MANA_MAX, TARGET_HP = 30000, 30000, 100
 function UnitPower(u) if u == "player" then return PLAYER_MANA end return 0 end
