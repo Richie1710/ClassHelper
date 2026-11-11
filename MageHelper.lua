@@ -351,6 +351,26 @@ local spells = {
     focusMagic = SpellName(54646, "Fokusmagie"),
 }
 
+-- Spell IDs of every rank the player may cast, for the combat log (3.3.5 passes the spellId).
+-- M.IsSpell falls back to the localized name from the spells table for anything missing here.
+M.CAST_IDS = {
+    fireball = { [133]=true, [143]=true, [145]=true, [3140]=true, [8400]=true, [8401]=true, [8402]=true, [10148]=true,
+                 [10149]=true, [10150]=true, [10151]=true, [25306]=true, [27070]=true, [38692]=true, [42832]=true, [42833]=true },
+    pyro = { [11366]=true, [12505]=true, [12522]=true, [12523]=true, [12524]=true, [12525]=true, [12526]=true, [18809]=true,
+             [27132]=true, [33938]=true, [42890]=true, [42891]=true },
+    lb = { [44457]=true, [55359]=true, [55360]=true }, -- cast and periodic tick; the explosion has other IDs
+    stop = { [2139]=true },
+    invis = { [66]=true },
+    combustion = { [11129]=true },
+    mirror = { [55342]=true },
+    iceblock = { [45438]=true },
+}
+function M.IsSpell(key, spellId, spellName)
+    local ids = M.CAST_IDS[key]
+    if ids and spellId and ids[spellId] then return true end
+    return spellName ~= nil and spellName == spells[key]
+end
+
 local buffNames = {
     hotStreak = { "Kampfeshitze", "Kampfeshitze!", "Heißer Zündstoff", "Hot Streak", "Hot Streak!", "Pyroschlag!", "Pyroblast!" },
     wildMagic = { "Wilde Magie", "Wild Magic" },
@@ -2692,21 +2712,25 @@ function KR:PLAYER_REGEN_ENABLED()
     if analyzer.current then SaveBossRun(analyzer.current); analyzer.current = nil; RefreshAnalyzerWindow() end
 end
 
+-- 3.3.5 layout (hideCaster came in 4.1, the raid flags in 4.2):
+--   timestamp, event, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, then the
+--   event's own parameters from the 9th on (SPELL_*/RANGE_*: spellId, spellName, spellSchool, amount,
+--   overkill, ...; SWING_DAMAGE: amount, overkill, ...).
 function KR:COMBAT_LOG_EVENT_UNFILTERED(...)
-    local timestamp, event, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, destRaidFlags = ...
+    local timestamp, event, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags = ...
     local playerGUID = UnitGUID("player")
 
     -- Analyzer damage / incoming / death recap ringbuffer
     if event == "SPELL_DAMAGE" or event == "RANGE_DAMAGE" then
-        local sid, sname, school, amount, overkill = select(12, ...)
+        local sid, sname, school, amount, overkill = select(9, ...)
         if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0) end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, sname, amount, overkill) end
     elseif event == "SPELL_PERIODIC_DAMAGE" then
-        local sid, sname, school, amount, overkill = select(12, ...)
-        if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0); if sname == spells.lb then AnalyzerAdd("lbTicks", 1) end end
+        local sid, sname, school, amount, overkill = select(9, ...)
+        if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0); if M.IsSpell("lb", sid, sname) then AnalyzerAdd("lbTicks", 1) end end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, sname, amount, overkill) end
     elseif event == "SWING_DAMAGE" then
-        local amount, overkill = select(12, ...)
+        local amount, overkill = select(9, ...)
         if sourceGUID == playerGUID then AnalyzerAdd("damageDone", amount or 0) end
         if destGUID == playerGUID then AnalyzerAdd("damageTaken", amount or 0); AnalyzerAdd("incomingDamage", amount or 0); AddIncomingHit(sourceName, L("Nahkampf"), amount, overkill) end
     elseif event == "SPELL_INTERRUPT" then
@@ -2715,28 +2739,29 @@ function KR:COMBAT_LOG_EVENT_UNFILTERED(...)
         -- intentionally ignored for DPS comparison
     end
 
-    local spellId, spellName = select(12, ...)
+    local spellId, spellName = select(9, ...)
     if sourceGUID ~= playerGUID then return end
     if event == "SPELL_CAST_SUCCESS" then
-        if spellName == spells.fireball then
+        local is = M.IsSpell
+        if is("fireball", spellId, spellName) then
             table.insert(fireballTimes, GetTime())
             fightStats.fireballs = (fightStats.fireballs or 0) + 1
             UpdateFireballCount()
-        elseif spellName == spells.pyro then
+        elseif is("pyro", spellId, spellName) then
             fightStats.pyros = (fightStats.pyros or 0) + 1
             AnalyzerAdd("pyroCasts", 1)
-        elseif spellName == spells.lb then
+        elseif is("lb", spellId, spellName) then
             fightStats.lbs = (fightStats.lbs or 0) + 1
             AnalyzerAdd("lbApplications", 1)
-        elseif spellName == spells.stop then
+        elseif is("stop", spellId, spellName) then
             AnalyzerAdd("counterspellUses", 1)
-        elseif spellName == spells.invis then
+        elseif is("invis", spellId, spellName) then
             -- use counted via warnings; cast success still useful for later review
-        elseif spellName == spells.combustion then
+        elseif is("combustion", spellId, spellName) then
             fightStats.combs = (fightStats.combs or 0) + 1
-        elseif spellName == spells.mirror then
+        elseif is("mirror", spellId, spellName) then
             fightStats.mirrors = (fightStats.mirrors or 0) + 1
-        elseif spellName == spells.iceblock then
+        elseif is("iceblock", spellId, spellName) then
             fightStats.iceblocks = (fightStats.iceblocks or 0) + 1
         end
     end

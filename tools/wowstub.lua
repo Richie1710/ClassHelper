@@ -8,7 +8,8 @@ function SetNow(t) now = t end
 
 local SPELLS = {
   [44457]={"Lebende Bombe","Living Bomb"}, [42891]={"Pyroschlag","Pyroblast"},
-  [42833]={"Feuerball","Fireball"}, [42873]={"Feuerschlag","Fire Blast"},
+  [42833]={"Feuerball","Fireball"}, [42832]={"Feuerball","Fireball"}, [133]={"Feuerball","Fireball"},
+  [55360]={"Lebende Bombe","Living Bomb"}, [55362]={"Lebende Bombe","Living Bomb"}, [42873]={"Feuerschlag","Fire Blast"},
   [11129]={"Ein\195\164schern","Combustion"}, [55342]={"Spiegelbild","Mirror Image"},
   [45438]={"Eisblock","Ice Block"}, [2139]={"Gegenzauber","Counterspell"},
   [66]={"Unsichtbarkeit","Invisibility"}, [43046]={"Gl\195\188hende R\195\188stung","Molten Armor"},

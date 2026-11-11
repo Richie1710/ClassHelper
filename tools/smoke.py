@@ -62,9 +62,10 @@ upd()
 INCOMBAT = true
 FireEvent("PLAYER_REGEN_DISABLED"); upd()
 AURAS.player = { {"Hot Streak", 0, nil, 48108} }; upd()
-FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_CAST_SUCCESS", nil, "GUID-player", "Kahuchan", 0, 0, "GUID-target", "Dummy", 0, 0, 42833, GetSpellInfo(42833), 4)
-FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_DAMAGE", nil, "GUID-target", "Dummy", 0, 0, "GUID-player", "Kahuchan", 0, 0, 1, "Hit", 1, 500, 0)
-FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SWING_DAMAGE", nil, "GUID-target", "Dummy", 0, 0, "GUID-player", "Kahuchan", 0, 0, 300, 0)
+-- 3.3.5 layout: timestamp, event, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, ...
+FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_CAST_SUCCESS", "GUID-player", "Kahuchan", 0x511, "GUID-target", "Dummy", 0xa48, 42833, GetSpellInfo(42833), 4)
+FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SPELL_DAMAGE", "GUID-target", "Dummy", 0xa48, "GUID-player", "Kahuchan", 0x511, 1, "Hit", 1, 500, 0)
+FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SWING_DAMAGE", "GUID-target", "Dummy", 0xa48, "GUID-player", "Kahuchan", 0x511, 300, 0)
 FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", GetSpellInfo(11129)); AURAS.player = {}; upd()
 AURAS.player = { {GetSpellInfo(66), 0, nil, 32612} }; upd(); AURAS.player = {}
 upd(200)
@@ -82,6 +83,79 @@ FRAMES.MageHelperOneButton.__scripts.OnClick(FRAMES.MageHelperOneButton)
 FRAMES.MageHelperAnalyzerMinimapButton.__scripts.OnClick(FRAMES.MageHelperAnalyzerMinimapButton, "RightButton")
 upd()
 check(MH.db.profile.combustionLB == 9, "slash commands write into the profile")
+'''
+
+# Combat log in the 3.3.5 layout (no hideCaster, no raid flags):
+#   timestamp, event, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, <event params>
+COMBATLOG = r'''
+local KR = MageHelperFrame
+local function CL(...) FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, ...) end
+local ME, BOSS, OTHER = "GUID-player", "GUID-boss", "GUID-Anya"
+local MEF, BOSSF, OTHERF = 0x511, 0xa48, 0x514
+local FB, PYRO, LB, CS = GetSpellInfo(42833), GetSpellInfo(42891), GetSpellInfo(55360), GetSpellInfo(2139)
+local BLIGHT = GetSpellInfo(69195)
+INCOMBAT = true
+FireEvent("PLAYER_REGEN_DISABLED"); Tick(0.15)
+Slash("analyse start")
+-- own casts: three max-rank Fireballs, one lower rank; another mage's Fireball must not count
+for i = 1, 3 do CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42833, FB, 4) end
+CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42832, FB, 4)
+CL("SPELL_CAST_SUCCESS", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 42833, FB, 4)
+CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42891, PYRO, 4)
+CL("SPELL_CAST_SUCCESS", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 42891, PYRO, 4)
+CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55360, LB, 4)
+-- own damage: spell hit, LB tick, LB explosion; other player's damage is ignored
+CL("SPELL_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 42833, FB, 4, 1000, 0, 4, 0, 0, 0, nil, nil, nil)
+CL("SPELL_PERIODIC_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55360, LB, 4, 200, 0, 4, 0, 0, 0, nil, nil, nil)
+CL("SPELL_DAMAGE", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 55362, LB, 4, 30, 0, 4, 0, 0, 0, nil, nil, nil)
+CL("SPELL_DAMAGE", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 42833, FB, 4, 99999, 0, 4, 0, 0, 0, nil, nil, nil)
+CL("SPELL_PERIODIC_DAMAGE", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 55360, LB, 4, 99999, 0, 4, 0, 0, 0, nil, nil, nil)
+-- interrupts: mine counts, another player's does not; Counterspell cast is counted
+CL("SPELL_CAST_SUCCESS", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 2139, CS, 64)
+CL("SPELL_INTERRUPT", ME, "Kahuchan", MEF, BOSS, "Boss", BOSSF, 2139, CS, 64, 69397, "Frostbolt", 16)
+CL("SPELL_INTERRUPT", OTHER, "Anya", OTHERF, BOSS, "Boss", BOSSF, 2139, CS, 64, 69397, "Frostbolt", 16)
+-- incoming: boss spell and melee on me; boss hits on another player are not mine
+CL("SPELL_DAMAGE", BOSS, "Boss", BOSSF, ME, "Kahuchan", MEF, 69195, BLIGHT, 32, 7000, 0, 32, 0, 0, 0, nil, nil, nil)
+CL("SWING_DAMAGE", BOSS, "Boss", BOSSF, ME, "Kahuchan", MEF, 3000, 250, 1, 0, 0, 0, nil, nil, nil)
+CL("SPELL_DAMAGE", BOSS, "Boss", BOSSF, OTHER, "Anya", OTHERF, 69195, BLIGHT, 32, 88888, 0, 32, 0, 0, 0, nil, nil, nil)
+CL("SWING_DAMAGE", BOSS, "Boss", BOSSF, OTHER, "Anya", OTHERF, 77777, 0, 1, 0, 0, 0, nil, nil, nil)
+Tick(0.15); Tick(0.15)
+
+local fbpm = tonumber(KR.info.__text:match("FB/min: |c%x%x%x%x%x%x%x%x(%d+)"))
+check(fbpm == 4, "FB/min counts own Fireballs (all ranks), got " .. tostring(fbpm) .. " in " .. KR.info.__text)
+local before = #OUT
+Slash("report")
+local fbs, pyros, lbs
+for i = before + 1, #OUT do
+  local a, b = OUT[i]:match(": (%d+)%s+Pyros: (%d+)$"); if a then fbs, pyros = tonumber(a), tonumber(b) end
+  local c = OUT[i]:match("^LB[%- ]%a+: (%d+)"); if c then lbs = tonumber(c) end
+end
+check(fbs == 4 and pyros == 1 and lbs == 1, string.format("fight report counts own casts: FB %s Pyro %s LB %s", tostring(fbs), tostring(pyros), tostring(lbs)))
+
+Slash("analyse stop")
+local r = MH.db.char.analyzer.lastTraining
+check(r and r.damageDone == 1230, "analyzer damage = own SPELL_DAMAGE + SPELL_PERIODIC_DAMAGE, got " .. tostring(r and r.damageDone))
+check(r.lbTicks == 1 and r.pyroCasts == 1 and r.lbApplications == 1, "analyzer LB ticks / Pyro / LB casts")
+check(r.interrupts == 1 and r.counterspellUses == 1, "own interrupt counted once, got " .. tostring(r.interrupts))
+check(r.damageTaken == 10000 and r.incomingDamage == 10000, "damage taken only from hits on me, got " .. tostring(r.damageTaken))
+
+FireEvent("PLAYER_DEAD")
+local hits = MH.db.char.analyzer.deathRecaps[1].hits
+local blight, melee, foreign = false, false, false
+for _, h in ipairs(hits) do
+  if h.source == "Boss" and h.spell == BLIGHT and h.amount == 7000 then blight = true end
+  if h.source == "Boss" and h.amount == 3000 and h.overkill == 250 then melee = true end
+  if h.amount == 88888 or h.amount == 77777 or h.source == "Kahuchan" then foreign = true end
+end
+check(blight and melee, "death recap shows the boss spell and melee hit on me")
+check(not foreign, "death recap ignores hits on others and my own damage")
+before = #OUT
+Slash("analyse death")
+local shown = table.concat(OUT, "\n", before + 1)
+check(shown:find(BLIGHT, 1, true) and shown:find("7000", 1, true) and shown:find("3000", 1, true), "death recap printout lists the hits")
+INCOMBAT = false
+FireEvent("PLAYER_REGEN_ENABLED")
+OUT[#OUT + 1] = "COMBATLOG OK"
 '''
 
 # Options window (AceConfig validates the table) and profile switching.
@@ -427,14 +501,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK)):
+        for name, part in (("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "OPTIONS", "T9", "THEMES", "FLASK", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)
