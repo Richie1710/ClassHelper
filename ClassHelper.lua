@@ -217,6 +217,8 @@ local L_EN = {
     ["|cffff7d0aClassHelper v%s|r geladen. /ch help"] = "|cffff7d0aClassHelper v%s|r loaded. /ch help",
     ["ClassHelper: Bar gesperrt"] = "ClassHelper: bar locked",
     ["ClassHelper: Bar verschiebbar"] = "ClassHelper: bar unlocked",
+    ["ClassHelper: Im Kampf kann die Leiste nicht ein-/ausgeblendet werden, das passiert nach dem Kampf."] = "ClassHelper: the bar cannot be shown/hidden in combat, this happens after combat.",
+    ["GLEICH"] = "SOON",
     ["ClassHelper: Buff-Bar gesperrt"] = "ClassHelper: buff bar locked",
     ["ClassHelper: Buff-Bar verschiebbar"] = "ClassHelper: buff bar unlocked",
     ["ClassHelper: Combustion-LB-Fenster = %ss"] = "ClassHelper: Combustion LB window = %ss",
@@ -1304,18 +1306,26 @@ local function CreateOneButton(parent)
     return btn
 end
 
-local function UpdateOneButton(key, urgent, note)
+-- prep: the caller says "not yet" (MarkRecommended): blue and dimmed like the single buttons'
+-- prep state, label "GLEICH" instead of "JETZT", never the red urgent border.
+local function UpdateOneButton(key, urgent, prep)
     if not oneButton or not key or not buttons[key] then return end
     local src = buttons[key]
     local tex = src.icon and src.icon:GetTexture() or nil
     oneButton.icon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
     oneButton.spellText:SetText(src.text and src.text:GetText() or key)
-    oneButton.border:SetVertexColor(urgent and 1 or 0.15, urgent and 0.05 or 0.85, urgent and 0.00 or 1, 0.95)
+    if prep then
+        oneButton.border:SetVertexColor(0.15, 0.55, 1.00, 0.95)
+    else
+        oneButton.border:SetVertexColor(urgent and 1 or 0.15, urgent and 0.05 or 0.85, urgent and 0.00 or 1, 0.95)
+    end
+    oneButton.label:SetText(L(prep and "GLEICH" or "JETZT"))
+    oneButton.state = prep and "prep" or (urgent and "urgent" or "glow")
 
     pendingOneButtonKey = nil
     oneButton.currentKey = key
     oneButton.lockText:SetText("")
-    oneButton:SetAlpha(1)
+    oneButton:SetAlpha(prep and 0.8 or 1)
     oneButton:EnableMouse(true)
 
     -- Privatserver-Modus: normaler Button, der beim Klick das aktuell empfohlene Makro ausführt.
@@ -2800,7 +2810,7 @@ local function MarkRecommended(key, urgent, prep)
             -- Not really clickable yet: blue prep state instead of strong usable glow.
             ButtonSetState(buttons[key], "prep", 0.80)
         end
-        UpdateOneButton(key, urgent)
+        UpdateOneButton(key, urgent, prep)
     end
     -- Spellsteal out of range (M.SpellstealReco): blue, while the rotation keeps its own recommendation.
     if M.stealPrep and key ~= "steal" and buttons.steal then ButtonSetState(buttons.steal, "prep", 0.80) end
@@ -3568,8 +3578,18 @@ end
 -- Main bar visible: switched on and the active mode has buttons.
 function M.BarWanted() return cfg.shown and not M.emptyRota end
 -- /ch show|hide, the option and the minimap button: show the bar only when it has buttons (Holy
--- Paladin and classes without a module keep it hidden).
-function M.ApplyBarShown() if M.BarWanted() then KR:Show() else KR:Hide() end end
+-- Paladin and classes without a module keep it hidden). KR parents secure buttons, so in combat the
+-- change waits for PLAYER_REGEN_ENABLED (M.barShownPending).
+function M.ApplyBarShown()
+    if InCombatLockdown() then
+        if not M.barShownPending then print(L("ClassHelper: Im Kampf kann die Leiste nicht ein-/ausgeblendet werden, das passiert nach dem Kampf.")) end
+        M.barShownPending = true
+        return false
+    end
+    M.barShownPending = nil
+    if M.BarWanted() then KR:Show() else KR:Hide() end
+    return true
+end
 
 -- Re-evaluate the rotation (talents, setting, profile). In combat the switch waits for PLAYER_REGEN_ENABLED.
 function M.ApplyRotaMode()
@@ -4411,6 +4431,7 @@ end
 function KR:PLAYER_REGEN_ENABLED()
     RefreshOneButtonAfterCombat()
     if M.rotaPending then M.ApplyRotaMode() end
+    if M.barShownPending then M.ApplyBarShown() end
     RebuildSpellMacros() -- Icy Veins learned/unlearned or potion choice changed in combat
     if chr.moltenRestorePending then RestoreAfterMolten() end
     if fmPendingAfterCombat then
@@ -4564,7 +4585,7 @@ local function HandleSlash(msg)
     if M.ClassCall("Slash", cmd, arg) then return end -- class module commands (e.g. /ch rota for Paladins)
     if not M.IsMage() and (M.MAGE_COMMANDS[cmd] or cmd:match("^tr..nengas$")) then print(L("ClassHelper: Nur für Magier.")); return end
     if cmd == "show" then cfg.shown = true; M.ApplyBarShown()
-    elseif cmd == "hide" then cfg.shown = false; KR:Hide()
+    elseif cmd == "hide" then cfg.shown = false; M.ApplyBarShown()
     elseif cmd == "lock" then cfg.locked = true; print(L("ClassHelper: Bar gesperrt"))
     elseif cmd == "unlock" then cfg.locked = false; print(L("ClassHelper: Bar verschiebbar"))
     elseif cmd == "buffs" then
@@ -4833,8 +4854,9 @@ function M.WarnOldMageHelper()
     local loaded = IsAddOnLoaded and IsAddOnLoaded("MageHelper")
     local name, enabled
     if GetAddOnInfo then
-        local n, _, _, e = GetAddOnInfo("MageHelper")
-        name, enabled = n, e
+        -- pcall: some clients raise an error for an addon name that isn't installed
+        local ok, n, _, _, e = pcall(GetAddOnInfo, "MageHelper")
+        if ok then name, enabled = n, e end
     end
     if loaded or (name and enabled) then
         print(L("ClassHelper: Das alte Addon MageHelper ist noch installiert. Bitte den Ordner Interface\\AddOns\\MageHelper löschen, sonst laufen beide. Einstellungen übernehmen: siehe README, Abschnitt \"Coming from MageHelper\"."))
@@ -5022,7 +5044,6 @@ function MH:OnInitialize()
     M.cfg, M.chr = cfg, chr -- for the class modules
     ApplyLanguageSetting()
     M.ClassCall("Init")
-    M.WarnOldMageHelper()
     -- leftovers of the old leg-name swap (v3.0) and of the first T9 version (v3.1)
     chr.moltenStep, chr.moltenT9Legs, chr.moltenMainLegs, chr.moltenCastAt = nil, nil, nil, nil
     self.db.RegisterCallback(self, "OnProfileChanged", "ApplyProfile")
@@ -5034,6 +5055,7 @@ function MH:OnInitialize()
     -- old commands from the MageHelper days keep working
     self:RegisterChatCommand("mh", HandleSlash)
     self:RegisterChatCommand("magehelper", HandleSlash)
+    M.WarnOldMageHelper() -- last: a failure here must not stop the setup above
 end
 
 local EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_DEAD", "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED", "INSPECT_TALENT_READY",

@@ -163,8 +163,9 @@ ChatFrame1 = DEFAULT_CHAT_FRAME
 -- Raid roster for tests: RAID[i] = {name=, class=, talents={a,b,c}, online=, dead=, range=}.
 -- RAID[1] should be the player ("Kahuchan"). Empty = solo.
 RAID = {}
+PLAYER_IS_DEAD = false -- the player dead (UnitIsDeadOrGhost("player"))
 local function raidEntry(u)
-  if u == "player" then return { name = "Kahuchan", class = PLAYER_CLASS or "MAGE" } end
+  if u == "player" then return { name = "Kahuchan", class = PLAYER_CLASS or "MAGE", dead = PLAYER_IS_DEAD == true } end
   -- the boss's target: TARGETTARGET / BOSSES.bossN.target = a RAID entry (or { name = "Kahuchan" } = me)
   if u == "targettarget" then return TARGETTARGET end
   local b = type(u) == "string" and u:match("^(boss%d)target$")

@@ -54,18 +54,22 @@ M.PAL_TARGET_STABLE = 0.5    -- the boss's target must be the same this long bef
 --   Festergut, Gastric Bloat: 100 s (DBM timerGastricBloat, Wowhead 1.667 min), a stack about every
 --     13 s, 10 stacks explode -> "clear" (own == 0): carrying stacks over would be lethal. With the
 --     100 s duration the taunt usually comes at 7-8 stacks on the other tank (own stacks gone).
+--     Safety: at M.PAL_FESTER_EMERGENCY (9) stacks on the other tank, one below the explosion, the
+--     taunt is red anyway, own stacks or not (rule field `emergency`).
 --   Professor Putricide, Mutated Plague (phase 3): a stack every 10 s on the tank; it lasts 60 s+
 --     (Wowhead lists 3 min) and heals Putricide for every stack when it expires or is removed, so it
 --     is never left to fall off: the tanks alternate A2/B2/A3/B3/... (warcraft.wiki.gg) -> "leapfrog".
 --   Sindragosa, Mystic Buffet (phase 3): 8 s (DBM), refreshed every 6 s -> "clear".
 --   Gormok, Impale: 40 s (Wowhead), every 8-10 s -> "clear".
+M.PAL_FESTER_EMERGENCY = 9     -- Gastric Bloat on the other tank: one below the explosion at 10 -> taunt regardless
 M.PAL_TAUNT_RULES = {
     { key = "dw", opt = "palT_dw", label = "Lady Todeswisper", npc = { 36855 }, kind = "stacks",
       ids = { 71204 }, n = 3, min = 2, max = 5 },                                  -- Touch of Insignificance
     { key = "saurfang", opt = "palT_saurfang", label = "Todesbringer Saurfang", npc = { 37813 }, kind = "cast",
       ids = { 72410 }, window = 20 },                                               -- Rune of Blood
     { key = "fester", opt = "palT_fester", label = "Fauldarm", npc = { 36626 }, kind = "stacks",
-      ids = { 72219, 72551, 72552, 72553 }, n = 6, min = 6, max = 9 },             -- Gastric Bloat
+      ids = { 72219, 72551, 72552, 72553 }, n = 6, min = 6, max = 9,                -- Gastric Bloat
+      emergency = M.PAL_FESTER_EMERGENCY },
     { key = "putri", opt = "palT_putri", label = "Professor Seuchenmord", npc = { 36678 }, kind = "stacks", mode = "leapfrog",
       ids = { 72451, 72463, 72671, 72672 }, n = 2, min = 1, max = 4 },             -- Mutated Plague (P3)
     { key = "sindra", opt = "palT_sindra", label = "Sindragosa", npc = { 36853 }, kind = "stacks",
@@ -138,6 +142,7 @@ E["Gottesschild als letzte Rettung"] = "Divine Shield as last resort"
 E["Standard aus: für Tanks nur als letzte Rettung gedacht."] = "Off by default: for tanks only meant as a last resort."
 E["Spott: %s hat %d Stapel %s (du: %d)"] = "Taunt: %s has %d stacks of %s (you: %d)"
 E["Spott: %s auf %s"] = "Taunt: %s on %s"
+E["Notfall: %s hat %d Stapel"] = "Emergency: %s has %d stacks"
 E["%s nicht bereit - %s"] = "%s not ready - %s"
 E["Spott nötig - Boss ins Ziel nehmen: %s"] = "Taunt needed - target the boss: %s"
 E["Verteidigung: %s"] = "Defensive: %s"
@@ -327,7 +332,10 @@ end
 -- with rules shows up.
 function M.PalProtBossState(S)
     local T = M.palProt
-    if S.inCombat then T.inCombat = true elseif T.inCombat then T.inCombat = false; M.PalProtReset() end
+    -- UnitAffectingCombat is false while dead: a tank death mid-fight must not drop the tracking
+    -- (Rune of Blood marks, pungentAt); it resets once the player is alive and out of combat.
+    if S.inCombat then T.inCombat = true
+    elseif T.inCombat and not UnitIsDeadOrGhost("player") then T.inCombat = false; M.PalProtReset() end
     local u, rule, npc = M.PalProtFindBoss()
     if npc then
         if T.bossNpc and T.bossNpc ~= npc then M.PalProtKeepOnly(rule.key) end
@@ -421,6 +429,10 @@ function M.PalTauntReason(S, rule, unit)
     local name = UnitName(unit) or "?"
     if rule.kind == "stacks" then
         local n, theirExp = M.PalUnitStacks(unit, rule)
+        -- "clear" safety (Festergut): one stack below the explosion -> red, whatever my own stacks are
+        if rule.emergency and rule.mode ~= "leapfrog" and n >= rule.emergency then
+            return string.format(L("Notfall: %s hat %d Stapel"), name, n)
+        end
         if n < M.PalTauntThreshold(rule) then return nil end
         local mine, remain, myExp = OwnDebuff(rule.ids)
         local why = string.format(L("Spott: %s hat %d Stapel %s (du: %d)"), name, n, SN(rule.ids[1]) or "?", mine)

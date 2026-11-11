@@ -1974,6 +1974,16 @@ Slash("aoe aus")
 -- no target: only buffs
 protBase(); NOTARGET = true; k = reco(); check(k == nil, "no target, buffs up: nothing: " .. tostring(k)); NOTARGET = nil
 endCombat()
+-- /ch hide|show in combat: the bar parents secure buttons, so the change waits for the end of combat
+check(ClassHelperFrame.__shown, "bar shown before the combat test")
+INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
+local before = #OUT
+Slash("hide"); check(ClassHelperFrame.__shown and M.barShownPending and #OUT == before + 1, "/ch hide in combat: deferred, with a note: " .. tostring(OUT[#OUT]))
+Slash("show"); Slash("hide"); check(#OUT == before + 1, "in-combat note only once")
+FRAMES.ClassHelperMinimapButton.__scripts.OnClick(FRAMES.ClassHelperMinimapButton); check(ClassHelperFrame.__shown, "minimap click in combat: deferred")
+FRAMES.ClassHelperMinimapButton.__scripts.OnClick(FRAMES.ClassHelperMinimapButton)
+endCombat(); check(not ClassHelperFrame.__shown and not M.barShownPending, "hidden after combat")
+opts().args.general.args.shown.set(nil, true); check(ClassHelperFrame.__shown, "option shows the bar out of combat")
 check(#ERRORS == 0, "no Lua errors")
 OUT[#OUT + 1] = "PROT OK"
 '''
@@ -2002,8 +2012,20 @@ k, n = reco(); check(k ~= "hor" and k ~= "rd", "own Gastric Bloat still up: no t
 DEBUFFS.player = { { S(GB), 3, GetTime() + 1, GB } }
 k, n = reco(); check(k == "hor" and st("hor") == "prep", "own stacks about to fall off: blue only, not red: " .. tostring(k) .. " " .. tostring(st("hor")))
 check(n:find("3", 1, true), "note shows my own stacks: " .. tostring(n))
+local OB = FRAMES.ClassHelperOneButton
+check(OB.currentKey == "hor" and OB.state == "prep" and OB.label:GetText() == M.L("GLEICH"), "one-button: prep taunt shown 'not yet', not as click-now: " .. tostring(OB.state) .. " " .. tostring(OB.label:GetText()))
 DEBUFFS.player = {}
 k = reco(); check(k == "hor" and st("hor") == "urgent", "own stacks gone: red: " .. tostring(st("hor")))
+check(OB.currentKey == "hor" and OB.state == "urgent" and OB.label:GetText() == M.L("JETZT"), "one-button: urgent taunt is click-now: " .. tostring(OB.state))
+-- Festergut safety: the other tank one below the explosion (9): red even while my own stacks are up
+check(M.PAL_FESTER_EMERGENCY == 9 and M.PAL_RULE_BY_NPC[36626].emergency == 9, "Festergut emergency threshold 9")
+DEBUFFS.player = { { S(GB), 3, GetTime() + 60, GB } }; stacks("targettarget", GB, 8)
+k = reco(); check(k ~= "hor" and k ~= "rd", "8 stacks on the other tank, mine up: no taunt: " .. tostring(k))
+stacks("targettarget", GB, 9)
+k, n = reco(); check(k == "hor" and st("hor") == "urgent", "EMERGENCY: 9 stacks on the other tank: red although mine are up: " .. tostring(k) .. " " .. tostring(st("hor")))
+check(n:find(GetLocale() == "deDE" and "Notfall" or "Emergency", 1, true) and n:find("Tanky", 1, true) and n:find("9", 1, true), "emergency note: " .. tostring(n))
+THREAT.target = { true, 3, 100, 100 }; k = reco(); check(k ~= "hor" and k ~= "rd", "emergency, but I tank (threat): no taunt: " .. tostring(k)); THREAT.target = nil
+DEBUFFS.player = {}; stacks("targettarget", GB, 6); reco()
 -- I tank the boss (threat API): never taunt
 THREAT.target = { true, 3, 100, 100 }; k = reco(); check(k ~= "hor" and k ~= "rd", "tanking by threat: no taunt: " .. tostring(k))
 THREAT.target = nil
@@ -2044,6 +2066,10 @@ FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, "SWING_DAMAGE", TARGETGUID, "Boss", 
 k = reco(); check(k ~= "hor", "SWING_DAMAGE of 72410: no rune: " .. tostring(k))
 cl("SPELL_CAST_SUCCESS", "GUID-Tanky", "Tanky", 72410)
 k, n = reco(); check(k == "hor" and st("hor") == "urgent", "SAURFANG: Rune of Blood on the other tank: taunt: " .. tostring(k))
+-- my death mid-fight: UnitAffectingCombat is false while dead, the rune mark must stay
+PLAYER_IS_DEAD = true; INCOMBAT = false; upd(2)
+check((M.palProt.marks["GUID-Tanky"] or {}).saurfang ~= nil and M.palProt.inCombat, "dead (out of combat by the API): tracking kept")
+PLAYER_IS_DEAD = nil; INCOMBAT = true; k = reco(); check(k == "hor", "battle res, back in combat: rune still counts: " .. tostring(k))
 TARGETTARGET = ME; k = reco(); check(k ~= "hor", "SAURFANG: boss on me: no taunt")
 TARGETTARGET = TANKY; upd(4); SetNow(GetTime() + 21); k = reco(); check(k ~= "hor", "SAURFANG: rune too old: no taunt: " .. tostring(k))
 -- boss change resets: Saurfang's marks don't carry over
@@ -2132,6 +2158,8 @@ k = reco(); check(k == "dprot", "Pungent Blight cast: DP: " .. tostring(k))
 SetNow(GetTime() + 5); k = reco(); check(k ~= "dprot", "Pungent moment over")
 cl("SPELL_AURA_APPLIED_DOSE", TARGETGUID, "Fauldarm", 69166, 3)
 k = reco(); check(k ~= "dprot", "3rd inhale: not yet")
+PLAYER_IS_DEAD = true; INCOMBAT = false; upd(2); check(M.palProt.pungentAt ~= nil, "dead: expected Pungent Blight kept")
+PLAYER_IS_DEAD = nil; INCOMBAT = true
 SetNow(GetTime() + 32); k = reco(); check(k == "dprot", "about 33 s after the 3rd inhale: DP: " .. tostring(k))
 endCombat()
 -- Gormok Staggering Stomp, Sindragosa buffet stacks on me
