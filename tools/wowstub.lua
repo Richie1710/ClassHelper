@@ -64,6 +64,7 @@ local SPELLS = {
   [31884]={"Zornige Vergeltung","Avenging Wrath"}, [35395]={"Kreuzfahrersto\195\159","Crusader Strike"},
   [53385]={"G\195\182ttlicher Sturm","Divine Storm"}, [48801]={"Exorzismus","Exorcism"}, [48817]={"Heiliger Zorn","Holy Wrath"},
   [59578]={"Die Kunst des Krieges","The Art of War"}, [53489]={"Die Kunst des Krieges","The Art of War"},
+  [61987]={"Zornige Vergeltung","Avenging Wrath Marker"}, -- hidden marker (German name unknown)
   [53758]={"Fl\195\164schchen des Steinbluts","Flask of Stoneblood"}, [53760]={"Fl\195\164schchen des endlosen Zorns","Flask of Endless Rage"},
   [66233]={"Unerm\195\188dlicher Verteidiger","Ardent Defender"},
   -- boss mechanics for the Protection taunt/defensive rules (one rank each is enough for names)
@@ -203,6 +204,13 @@ function IsSpellInRange(spell, unit)
   return RANGE[unit] or 1
 end
 function IsUsableSpell(spell) if USABLE[spell] == false then return nil, 1 end return 1, nil end
+-- creature type of the target, localized like the client: TARGET_TYPE = { "Untoter", "Undead" } (default Humanoid)
+TARGET_TYPE = nil
+function UnitCreatureType(u)
+  if u ~= "target" or not UnitExists("target") then return nil end
+  local t = TARGET_TYPE or { "Humanoid", "Humanoid" }
+  return (LOCALE == "deDE") and t[1] or t[2]
+end
 -- mana and target health for the Arcane rotation
 PLAYER_MANA, PLAYER_MANA_MAX, TARGET_HP = 30000, 30000, 100
 function UnitPower(u) if u == "player" then return PLAYER_MANA end return 0 end
