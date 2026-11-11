@@ -16,6 +16,7 @@ Fire, Arcane and Frost Mage helper for **World of Warcraft: Wrath of the Lich Ki
 - **Molten Armor with the T9 2-piece bonus:** click 1 puts on T9 pieces from your bags (found by item ID, any T9 version) until two are worn, click 2 casts Molten Armor, then your previous gear goes back on automatically. The button color shows the step and whether the active armor has the bonus. Can be switched off in the settings.
 - **Focus Magic target picker:** scrollable group list with the filters *only mages* and *only healers without Focus Magic* (healer specs are detected by inspecting talents – handy for Valithria). Save a fixed partner, pick a temporary target, switch back with one click.
 - **ICC helpers:** Ice Block for boss mechanics (Pungent Blight, Boiling Blood, Swarming Shadows), Sindragosa stack warnings, Putricide Malleable Goo, Blood Queen essence, mandatory interrupts and Lich King threat.
+- **Putricide Tear Gas (normal 10/25 only):** just above 80% / 35% of his health (lead adjustable, 0.5–5%) the Invisibility button turns red so you are invisible before the gas stuns the raid; once it lands, cancel Invisibility and damage him alone. The info line counts down to his re-engage (drink casts and yells as in DBM) and, if your threat is too high then, suggests Ice Block or stop casting (`/mh teargas on|off|0.5-5`).
 - **Analyzer:** boss fight and training-dummy runs with A/B comparison, fight report and death recap.
 - **Color themes:** Standard, Pink, Blue and Red for bars and windows. Signal colors (green, red, orange, blue) never change, and all themes keep readable contrast.
 - **Settings window and profiles** (Ace3): `/mh config` or *Interface → AddOns → MageHelper*. Every character starts with its own profile; profiles can be shared or copied.
@@ -103,6 +104,7 @@ Helfer für Feuer-, Arkan- und Frostmagier in **WotLK 3.3.5a**, für deutsche un
 - **Trank pro Charakter** (`/mh trank auto|tempo|wild|mana|unzerstoerbar|aus`): die Cooldown-Buttons aller Rotas benutzen ihn mit; automatisch Wilde Magie für Feuer, Geschwindigkeit für Arkan und Frost; die Buff-Leiste prüft seinen Buff
 - **MF-Ziel-Auswahl** mit den Filtern „nur Mages“ und „nur Heiler ohne MF“
 - **ICC-Hinweise**
+- **Seuchenmord-Tränengas** (nur normal): knapp über 80 % / 35 % Unsichtbarkeit, nach dem Gas abbrechen und allein Schaden machen; Countdown bis zum Wiederangriff, bei zu hoher Bedrohung Eisblock (`/mh tränengas an|aus|0.5-5`)
 - **Analyzer**
 - **Einstellungsfenster mit Profilen** (`/mh config`)
 

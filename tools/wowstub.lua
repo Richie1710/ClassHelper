@@ -32,6 +32,8 @@ local SPELLS = {
   -- Potion use spells (buffs, Runic Mana has none)
   [53908]={"Geschwindigkeit","Speed"}, [53909]={"Wilde Magie","Wild Magic"},
   [53762]={"Unzerst\195\182rbar","Indestructible"}, [43186]={"Mana wiederherstellen","Restore Mana"},
+  -- Professor Putricide: Tear Gas cast and stun
+  [71617]={"Tr95tnengas","Tear Gas"}, [71615]={"Tr95tnengas","Tear Gas"},
 }
 function GetLocale() return LOCALE end
 function GetSpellInfo(x)
@@ -184,8 +186,8 @@ function UnitName(u)
 end
 function UnitIsUnit(a, b) return a == b or (UnitName(a) ~= nil and UnitName(a) == UnitName(b)) end
 function UnitGUID(u)
-  if u == "target" then return "GUID-" .. (TARGETNAME or "target") end
-  if BOSSES[u] then return "GUID-" .. BOSSES[u].name end
+  if u == "target" then return TARGETGUID or ("GUID-" .. (TARGETNAME or "target")) end
+  if BOSSES[u] then return BOSSES[u].guid or ("GUID-" .. BOSSES[u].name) end
   local e = raidEntry(u)
   if e and e.name == "Kahuchan" then return "GUID-player" end
   return e and ("GUID-" .. e.name) or ("GUID-" .. u)
@@ -193,9 +195,28 @@ end
 function UnitClass(u) local e = raidEntry(u); if e then return e.class, e.class end end
 function UnitIsConnected(u) local e = raidEntry(u); return e ~= nil and e.online ~= false end
 function UnitAffectingCombat() return INCOMBAT end
-function UnitCastingInfo() return nil end
+-- CASTING[unit] = { name, startMS, endMS } (3.3.5: name, subText, text, icon, startTime, endTime, ...; no spell ID)
+CASTING = {}
+function UnitCastingInfo(u)
+  local c = CASTING[u]
+  if c then return c[1], nil, c[1], "icon", c[2], c[3], false, 1, false end
+end
 function UnitChannelInfo(u) if u == "player" then return CHANNEL end end
-function UnitDetailedThreatSituation() return false, 0, 10, 10 end
+-- THREAT[unit] = { isTanking, status, scaledPercent, rawPercent } on that mob (default: low threat)
+THREAT = {}
+function UnitDetailedThreatSituation(u, mob)
+  local t = THREAT[mob]
+  if t then return t[1], t[2], t[3], t[4] end
+  return false, 0, 10, 10
+end
+-- instance: INSTANCE = { type = "raid", difficulty = 1-4, dynamic = 0/1, isDynamic = true } (default: outside)
+INSTANCE = nil
+function GetInstanceInfo()
+  local i = INSTANCE
+  if not i then return "World", "none", 1, "", 5, 0, false end
+  return "Icecrown Citadel", i.type or "raid", i.difficulty, "", i.difficulty == 2 and 25 or 10, i.dynamic or 0, i.isDynamic ~= false
+end
+function GetInstanceDifficulty() return INSTANCE and INSTANCE.difficulty or 1 end
 function GetUnitSpeed() return MOVING and 7 or 0 end
 function InCombatLockdown() return INCOMBAT and true or false end
 function GetNumRaidMembers() return #RAID end

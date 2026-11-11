@@ -1206,6 +1206,151 @@ AURAS.player = {}
 OUT[#OUT + 1] = "POTION OK"
 '''
 
+# Professor Putricide Tear Gas (normal only): Invisibility just above 80%/35% (cfg.putricideInvisLead),
+# hold while invisible, cancel after the gas lands, re-engage countdown (yells, drinks), threat check
+# -> Ice Block or stop casting, ends on 71615 removed / 71620 / timeout / combat end; cast start is a
+# late fallback (combat log in the 3.3.5 layout or UnitCastingInfo); heroic and other casters ignored.
+TEARGAS = r"""
+local KR = MageHelperFrame
+local de = GetLocale() == "deDE"
+local function upd(n) for i = 1, (n or 2) do Tick(0.15) end end
+local function reco() return FRAMES.MageHelperOneButton.currentKey end
+local function st(k) return FRAMES["MageHelperButton_" .. k].state end
+local function info() return KR.info.__text end
+local function S(id) return (GetSpellInfo(id)) end
+local function has(s, ger, eng) return s:find(de and ger or eng, 1, true) ~= nil end
+local function CL(...) FireEvent("COMBAT_LOG_EVENT_UNFILTERED", 0, ...) end
+local INVIS, ICE, GAS = S(66), S(45438), S(71617)
+local PG, PN = "0xF130008F46000123", "Professor Putricide"
+local RAIDG = "0x0000000000000042"
+local errors = #ERRORS
+local function invisible(on) AURAS.player = on and { { INVIS, 0, GetTime() + 20, 32612 } } or {} end
+local function fight() INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED") end
+local function hp(v) BOSSES.boss1.hp = v; upd() end
+local function gasCast(src) CL("SPELL_CAST_START", src or PG, PN, 0xa48, "", nil, 0x80000000, 71617, GAS, 8) end
+local function show(tag) OUT[#OUT + 1] = "TEARGAS " .. tag .. " " .. info() end
+
+INCOMBAT, MOVING, NOTARGET, FOCUS, TARGET_HP, PET = false, false, nil, nil, 100, true
+AURAS.player, DEBUFFS.player, DEBUFFS.target, AURAS.target, COOLDOWNS, ITEM_COOLDOWNS, CASTING, THREAT = {}, {}, {}, {}, {}, {}, {}, {}
+INSTANCE = { difficulty = 1 }
+BOSSES = { boss1 = { name = PN, hp = 90, guid = PG } }
+TARGETNAME, TARGETGUID = PN, PG
+check(MH.db.profile.putricideInvis == true and MH.db.profile.putricideInvisLead == 1.0, "Tear Gas defaults: on, lead 1%")
+
+-- every rotation: pre-warning (blue, no override) and the trigger at threshold + lead (urgent)
+for _, mode in ipairs({ "feuer", "arkan", "frost" }) do
+  INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); Slash("rota " .. mode); INCOMBAT = true; FireEvent("PLAYER_REGEN_DISABLED")
+  hp(90); check(reco() ~= "invis" and st("invis") == "normal", mode .. ": 90% nothing")
+  hp(81.6); check(reco() ~= "invis" and st("invis") == "prep" and has(info(), "Gleich Tränengas", "Tear Gas soon"), mode .. ": 81.6% pre-warning, blue: " .. info())
+  hp(80.9); check(reco() == "invis" and st("invis") == "urgent", mode .. ": 80.9% urgent Invisibility (" .. tostring(reco()) .. ")")
+  hp(35.8); check(reco() == "invis" and st("invis") == "urgent", mode .. ": 35.8% urgent Invisibility")
+  hp(79); check(reco() ~= "invis", mode .. ": below 80% without a cast: nothing")
+  if not de then check(not info():find("[\195]") and not info():find("Seuchenmord", 1, true), "English info line: " .. info()) end
+end
+show("TRIGGER")
+
+-- full transition in Fire
+fight(); INCOMBAT = false; Slash("rota feuer"); INCOMBAT = true
+hp(80.9); check(reco() == "invis", "Fire: trigger")
+invisible(true); COOLDOWNS[INVIS] = 180; upd()
+check(reco() == nil and st("invis") == "normal" and has(info(), "Unsichtbar noch 20 s - Seuchenmord 80.9%", "Invisible for 20 s - Putricide 80.9%"), "invisible: wait, time left and health: " .. info())
+show("WAIT")
+gasCast(); upd()
+check(reco() == nil, "cast started, still invisible: keep waiting")
+upd(16) -- 2.4 s later the gas has landed
+check(reco() == "invis" and st("invis") == "urgent" and has(info(), "greift in ~", "re-engages in ~"), "gas landed, invisible: cancel Invisibility (" .. tostring(reco()) .. ") " .. info())
+check(FRAMES.MageHelperButton_invis.__attr.macrotext:find("/cancelaura " .. INVIS, 1, true), "invis macro cancels the aura first")
+show("CANCEL")
+invisible(false); CL("SPELL_AURA_APPLIED", PG, PN, 0xa48, RAIDG, "Anya", 0x514, 71615, GAS, 8, "DEBUFF"); upd()
+check(reco() ~= "invis" and reco() ~= nil and has(info(), "Vorsicht Bedrohung", "watch your threat"), "cancelled: rotation + threat hint (" .. tostring(reco()) .. ") " .. info())
+CL("SPELL_CAST_START", PG, PN, 0xa48, "", nil, 0x80000000, 71621, "Create Concoction", 8); upd()
+check(has(info(), "greift in 9 s", "re-engages in 9 s"), "Create Concoction: re-engage in 4 + 5.5 s: " .. info())
+FireEvent("CHAT_MSG_MONSTER_YELL", de and "Hm, ich spüre gar nichts. Nanu?! Wo kommen die denn her?" or "Hrm, I don't feel a thing. Wha?! Where'd those come from?", PN); upd()
+check(has(info(), "greift in 5 s", "re-engages in 5 s"), "yell 1: re-engage in 5.5 s: " .. info())
+show("COUNTDOWN")
+upd(15) -- 2.25 s later: 3 s left, low threat
+check(reco() ~= "ice" and reco() ~= nil, "low threat before re-engage: rotation")
+upd(8) -- below 2 s left: threat check
+THREAT.boss1 = { true, 3, 100, 100 }; upd()
+check(reco() == "ice" and st("ice") == "urgent", "tanking Putricide before his re-engage: urgent Ice Block (" .. tostring(reco()) .. ")")
+COOLDOWNS[ICE] = 200; upd()
+check(reco() == nil and has(info(), "Stop casten", "stop casting"), "Ice Block on cooldown: stop-casting warning: " .. info())
+show("THREAT")
+THREAT.boss1 = { false, 1, 92, 92 }; COOLDOWNS[ICE] = nil; upd()
+check(reco() == "ice", "92% scaled threat: Ice Block")
+BOSSES.boss1.hp = 79.5; THREAT.boss1 = nil; CL("SPELL_CAST_SUCCESS", PG, PN, 0xa48, "", nil, 0x80000000, 71620, GAS, 8); upd()
+check(has(info(), "greift wieder an", "re-engages"), "71620: re-engaged, threat check still running: " .. info())
+upd(22)
+check(not has(info(), "Seuchenmord", "Putricide"), "3 s after the re-engage: helper done: " .. info())
+hp(80.8); check(reco() ~= "invis", "80% trigger does not fire again")
+hp(35.9); check(reco() ~= "invis" and has(info(), "Gleich", "soon"), "35%: Invisibility still on cooldown, only a hint")
+COOLDOWNS[INVIS] = nil; upd(); check(reco() == "invis", "35% trigger still pending")
+COOLDOWNS[INVIS] = 180
+
+-- 71615 removed ends the transition (Guzzle Potions / yell 2 timings)
+invisible(true); upd(); gasCast(); upd(18); invisible(false); upd()
+CL("SPELL_CAST_START", PG, PN, 0xa48, "", nil, 0x80000000, 71893, "Guzzle Potions", 8); upd()
+check(has(info(), "greift in 12 s", "re-engages in 12 s"), "Guzzle Potions: 4 + 8.5 s: " .. info())
+FireEvent("CHAT_MSG_MONSTER_YELL", de and "Schmeckt nach... Kirsche! OH! Verzeihung!" or "Tastes like... Cherry! OH! Excuse me!", PN); upd()
+check(has(info(), "greift in 8 s", "re-engages in 8 s"), "yell 2: 8.5 s: " .. info())
+BOSSES.boss1.hp = 34.5; CL("SPELL_AURA_REMOVED", PG, PN, 0xa48, RAIDG, "Anya", 0x514, 71615, GAS, 8, "DEBUFF"); upd(22)
+check(not has(info(), "Seuchenmord", "Putricide"), "71615 removed: done after the threat check: " .. info())
+
+-- lead setting: slash and options
+fight(); COOLDOWNS = {}
+local before = #OUT
+Slash(de and "tr\195\164nengas 3" or "teargas 3")
+check(MH.db.profile.putricideInvisLead == 3 and OUT[before + 1]:find("3.0", 1, true), "/mh tränengas 3 sets the lead: " .. tostring(OUT[before + 1]))
+hp(83.2); check(reco() ~= "invis" and st("invis") == "prep", "lead 3: 83.2% only pre-warning")
+hp(82.9); check(reco() == "invis", "lead 3: 82.9% urgent")
+Slash("traenengas 9"); check(MH.db.profile.putricideInvisLead == 5, "lead clamped to 5")
+local o = LibStub("AceConfigRegistry-3.0"):GetOptionsTable("MageHelper", "dialog", "MyLib-1.0")
+local b = o.args.bosses.args
+check(b.putricideInvisLead.min == 0.5 and b.putricideInvisLead.max == 5, "options: lead slider 0.5-5")
+o.args.bosses.set({ "bosses", "putricideInvisLead" }, 0.5); fight()
+check(MH.db.profile.putricideInvisLead == 0.5, "options: lead 0.5")
+hp(80.6); check(reco() ~= "invis", "lead 0.5: 80.6% not yet")
+hp(80.4); check(reco() == "invis", "lead 0.5: 80.4% urgent")
+b.putricideInvis.set({ "bosses", "putricideInvis" }, false); upd()
+check(MH.db.profile.putricideInvis == false and reco() ~= "invis" and st("invis") == "normal", "options: off -> nothing")
+Slash("teargas on"); Slash("teargas 1"); upd(); check(reco() == "invis", "/mh teargas on")
+Slash("teargas off"); upd(); check(reco() ~= "invis", "/mh teargas off -> nothing")
+gasCast(); upd(); check(reco() ~= "invis", "off: cast start ignored")
+Slash("teargas on"); fight()
+
+-- heroic and other instances: off
+INSTANCE.difficulty = 3; hp(80.9); check(reco() ~= "invis" and st("invis") == "normal", "10 heroic: nothing")
+INSTANCE.difficulty = 4; gasCast(); upd(); check(reco() ~= "invis", "25 heroic: cast ignored")
+INSTANCE = { difficulty = 2, dynamic = 1 }; hp(80.9); check(reco() ~= "invis", "heroic reported as 25 + dynamic flag: nothing")
+INSTANCE = nil; hp(80.9); check(reco() ~= "invis", "outside a raid: nothing")
+INSTANCE = { difficulty = 2 }; hp(80.9); check(reco() == "invis", "25 normal: trigger")
+
+-- fallback on the cast start (window missed)
+fight(); hp(70)
+gasCast("0xF130001234000001"); upd(); check(reco() ~= "invis", "71617 from another NPC: ignored")
+BOSSES.boss1.guid = "0xF130001234000001"; TARGETGUID = "GUID-x"; hp(80.9); check(reco() ~= "invis", "not Putricide: no trigger")
+BOSSES.boss1.guid = PG; TARGETGUID = PG; hp(70)
+gasCast(); upd(); check(reco() == "invis" and st("invis") == "urgent", "cast start fallback: urgent Invisibility")
+show("FALLBACK")
+upd(22); check(reco() ~= "invis", "3 s after the cast: too late, nothing")
+DEBUFFS.player = { { GAS, 0, GetTime() + 18, 71615 } }; upd(); check(reco() ~= "invis" and reco() ~= nil, "stunned anyway: no Tear Gas recommendation")
+DEBUFFS.player = {}; fight()
+CASTING.boss1 = { GAS, GetTime() * 1000, GetTime() * 1000 + 2500 }; upd()
+check(reco() == "invis", "UnitCastingInfo fallback (name from GetSpellInfo)")
+CASTING.boss1 = nil
+COOLDOWNS[INVIS] = 100; fight(); gasCast(); upd(); check(reco() ~= "invis", "Invisibility on cooldown: no fallback")
+upd(300); check(not has(info(), "Seuchenmord", "Putricide"), "timeout ends the transition")
+COOLDOWNS = {}; hp(80.9); invisible(true); upd(); check(reco() == nil, "invisible in the window: wait")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED"); invisible(false); hp(70)
+check(reco() ~= nil, "combat end: back to the rotation")
+
+check(#ERRORS == errors, "no Lua errors (protected frames untouched in combat)")
+INCOMBAT = false; FireEvent("PLAYER_REGEN_ENABLED")
+BOSSES, TARGETNAME, TARGETGUID, INSTANCE, THREAT, CASTING, AURAS.player, DEBUFFS.player, COOLDOWNS, PET = {}, nil, nil, nil, {}, {}, {}, {}, {}, false
+Slash("rota auto")
+OUT[#OUT + 1] = "TEARGAS OK"
+"""
+
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(Klick|Linksklick|Rechtsklick|gesetzt|gespeichert|Befehle|Ziel|Hose|Eisblock|Feuerball|Kampf|Lauf|keine?|nach|anzeigen|AUS|AN)\b")
 
 version, files = toc_files()
@@ -1226,14 +1371,14 @@ for loc in ("deDE", "enUS"):
     g.FireEvent("PLAYER_LOGIN")
     g.FireEvent("PLAYER_ENTERING_WORLD")
     try:
-        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION)):
+        for name, part in (("t10login", T10LOGIN), ("migration", MIGRATION), ("main", SCRIPT), ("combatlog", COMBATLOG), ("options", OPTIONS), ("picker", PICKER), ("t9", T9), ("themes", THEMES), ("flask", FLASK), ("arcane", ARCANE), ("spellsteal", SPELLSTEAL), ("frost", FROST), ("potion", POTION), ("teargas", TEARGAS)):
             lua.execute(COMMON + part)
     except Exception as e:
         failed = True
         print(f"!!!!! {loc} scenario '{name}' failed: {e}")
     out = list(g.OUT.values())
     for l in out:
-        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "|cffff7d0aMageHelper v")): print("  " + l)
+        if l.startswith(("T10LOGIN", "ROWS", "LABEL", "STATUS", "PICKER", "MIGRATION", "COMBATLOG", "OPTIONS", "T9", "THEMES", "FLASK", "ARCANE", "STEAL", "SPELLSTEAL", "FROST", "POTION", "TEARGAS", "|cffff7d0aMageHelper v")): print("  " + l)
     errors = list(g.ERRORS.values())
     for e in errors: print("  LUA ERROR:", e)
     failed = failed or bool(errors)

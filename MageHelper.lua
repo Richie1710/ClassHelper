@@ -46,6 +46,8 @@ local defaults = {
         iccUtility = true,
         buffetStacks = 5,
         instabilityStacks = 5,
+        putricideInvis = true,    -- Putricide (normal): dodge Tear Gas with Invisibility
+        putricideInvisLead = 1.0, -- % above 80/35 at which Invisibility is asked for (0.5-5)
         debugMode = false,
         reportOnFightEnd = true,
         analyzerIconX = -10,
@@ -382,6 +384,31 @@ local L_EN = {
     ["MageHelper: Zauberraub AN (nur lohnende Buffs)"] = "MageHelper: Spellsteal ON (only buffs worth stealing)",
     ["MageHelper: Zauberraub AN (alle stehlbaren Buffs)"] = "MageHelper: Spellsteal ON (all stealable buffs)",
     ["/mh raub an|aus|alle|lohnend - Zauberraub-Hinweis (alle = auch nicht gelistete Buffs)"] = "/mh steal on|off|all|worth - Spellsteal hint (all = also unlisted buffs)",
+    -- Putricide Tear Gas helper
+    ["Gleich Tränengas: Unsichtbarkeit bereithalten"] = "Tear Gas soon: get Invisibility ready",
+    ["JETZT Unsichtbarkeit: Tränengas kommt"] = "Invisibility NOW: Tear Gas incoming",
+    ["JETZT Unsichtbarkeit: Tränengas"] = "Invisibility NOW: Tear Gas",
+    ["Unsichtbar: warten auf Tränengas"] = "Invisible: wait for Tear Gas",
+    ["Unsichtbar: warten, bis das Tränengas landet"] = "Invisible: wait until Tear Gas lands",
+    ["Unsichtbar noch %.0f s - Seuchenmord %.1f%%"] = "Invisible for %.0f s - Putricide %.1f%%",
+    ["Seuchenmord %.1f%%"] = "Putricide %.1f%%",
+    ["Gleich Tränengas (Seuchenmord %.1f%%)"] = "Tear Gas soon (Putricide %.1f%%)",
+    ["Unsichtbarkeit abbrechen, DPS auf Seuchenmord"] = "Cancel Invisibility, DPS Putricide",
+    ["Unsichtbarkeit abbrechen (Buff rechtsklicken), DPS auf Seuchenmord"] = "Cancel Invisibility (right-click the buff), DPS Putricide",
+    ["Seuchenmord greift wieder an"] = "Putricide re-engages",
+    ["Seuchenmord greift in ~%.0f s wieder an"] = "Putricide re-engages in ~%.0f s",
+    ["Seuchenmord greift in %.0f s wieder an"] = "Putricide re-engages in %.0f s",
+    ["Vorsicht Bedrohung beim Wiedereinsetzen"] = "watch your threat when he re-engages",
+    ["Eisblock: Seuchenmord wählt ein anderes Ziel"] = "Ice Block: Putricide picks another target",
+    ["EISBLOCK: Bedrohung auf Seuchenmord %.0f%%"] = "ICE BLOCK: threat on Putricide %.0f%%",
+    ["Bedrohung hoch (%.0f%%): Stop casten"] = "High threat (%.0f%%): stop casting",
+    ["Warten"] = "Wait",
+    ["Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen"] = "Putricide (normal): dodge Tear Gas with Invisibility",
+    ["Unsichtbarkeit so viele Prozent über 80 % / 35 % anfordern"] = "Ask for Invisibility this many percent above 80% / 35%",
+    ["Nur auf normal (10/25): Tränengas betäubt alle Spieler, bis Seuchenmord wieder angreift. Wer schon unsichtbar ist, wenn es landet, bleibt frei: Bei Seuchenmords Leben knapp über 80 % bzw. 35 % fordert der Unsichtbarkeit-Button rot auf, danach abbrechen und Seuchenmord allein schaden. Die Infozeile zählt bis zum Wiederangriff herunter; ist deine Bedrohung dann zu hoch, kommt Eisblock (oder Stop casten)."] = "Normal mode only (10/25): Tear Gas stuns every player until Putricide re-engages. Whoever is already invisible when it lands stays free: just above 80% / 35% of Putricide's health the Invisibility button turns red; cancel it afterwards and damage Putricide alone. The info line counts down to his re-engage; if your threat is too high then, Ice Block is suggested (or stop casting).",
+    ["MageHelper: Tränengas-Hilfe AN (Unsichtbarkeit %.1f%% über der Schwelle)"] = "MageHelper: Tear Gas helper ON (Invisibility %.1f%% above the threshold)",
+    ["MageHelper: Tränengas-Hilfe AUS"] = "MageHelper: Tear Gas helper OFF",
+    ["/mh tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35"] = "/mh teargas on|off|0.5-5 - Putricide (normal): dodge Tear Gas with Invisibility, number = percent above 80/35",
     -- Frost rotation
     ["Frost"] = "Frost",
     ["Kein Begleiter: %s"] = "No pet: %s",
@@ -2701,6 +2728,7 @@ local function MarkRecommended(key, urgent)
     end
     -- Spellsteal out of range (M.SpellstealReco): blue, while the rotation keeps its own recommendation.
     if M.stealPrep and key ~= "steal" and buttons.steal then ButtonSetState(buttons.steal, "prep", 0.80) end
+    M.TearGasPaint(key) -- Putricide Tear Gas: Invisibility button blue/urgent, empty one-button on "wait"
     UpdateButtonCooldownVisuals()
 end
 
@@ -2817,11 +2845,223 @@ local function UpdateBuffBar()
     end
 end
 
+-- =============================
+-- Professor Putricide: Tear Gas (normal mode)
+-- =============================
+-- In 10N/25N Professor Putricide (NPC 36678) casts Tear Gas (71617, 2.5 s, ignores line of sight) at
+-- 80% and 35% health: every player is stunned (71615, 99% less damage taken, not prevented by Ice
+-- Block) while he drinks (Create Concoction 71621/72850 at 80%, Guzzle Potions 71893/73120 at 35%,
+-- 4 s each on normal), yells, and re-engages 5.5 s (first yell) / 8.5 s (second yell) later; Tear Gas
+-- Cancel (71620) lifts the stun. Heroic has no Tear Gas, so all of this is off there.
+-- A mage who is already invisible when the gas lands is not stunned and can DPS him alone. Once he
+-- casts, everyone is stunned, so the helper asks for Invisibility while his health is at most
+-- cfg.putricideInvisLead % above the threshold; the cast start (combat log or UnitCastingInfo) is
+-- only a late fallback. States (M.TearGasReco, first in M.EmergencyReco, so it overrides the analyzer's
+-- "Invisibility active - cancel afterwards"):
+--   pre-warning (lead .. lead+1.5 % above): info hint + Invisibility button blue
+--   trigger (threshold .. threshold+lead, once per threshold): urgent Invisibility
+--   invisible before the gas: no button (any cast would break it), info: time left + his health
+--   gas landed, still invisible: Invisibility button urgent = cancel it (the macro's /cast then fails
+--   on the 3 min cooldown, nothing is wasted); then the rotation, info: re-engage countdown
+--   ~2 s before re-engage and 3 s after it: threat check -> Ice Block (ready) or "stop casting"
+--   stunned anyway: nothing.
+-- Sources: DBM-Icecrown ThePlagueworks/Putricide.lua (IDs, cast times, yell timings), TrinityCore
+-- boss_professor_putricide.cpp (71615/71618 stun, 71620 cancel).
+M.TG = {
+    NPC = 36678, CAST = 71617, STUN = 71615, CANCEL = 71620,
+    CONCOCTION = { [71621] = true, [72850] = true, [72851] = true, [72852] = true },
+    GUZZLE = { [71893] = true, [73120] = true, [73121] = true, [73122] = true },
+    DRINK_CAST = 4,               -- normal cast time of both drinks (DBM)
+    YELL1_DELAY = 5.5, YELL2_DELAY = 8.5, -- re-engage after yell 1 / yell 2 (DBM)
+    THRESHOLDS = { 80, 35 },
+    PREWARN = 1.5,                -- % above threshold + lead: blue pre-warning
+    CAST_TIME = 2.5,
+    FALLBACK_FOR = 3,             -- s after the cast start the late Invisibility hint is shown
+    REENGAGE_DEFAULT = 18.5,      -- s after the cast start, until a drink cast or yell gives a better time
+    THREAT_LEAD = 2,              -- s before the expected re-engage the threat check starts
+    THREAT_AFTER = 3,             -- s after the re-engage it keeps running
+    THREAT_PCT = 90,              -- scaled threat % that counts as "would pull"
+    MAX_FOR = 40,                 -- s: tracking ends at the latest
+    YELLS1 = { "Wo kommen die denn her", "Where'd those come from" },
+    YELLS2 = { "Schmeckt nach... Kirsche", "Tastes like... Cherry" },
+}
+M.tg = nil                -- current transition: { castAt, landed, reengageAt, estimate, reengaged }
+M.tgFired = {}            -- [threshold] = true once the trigger was followed (player went invisible)
+M.tgHint, M.tgPaint = nil, nil
+
+-- 3.3.5 GUIDs are "0xF130" .. 5 hex digits NPC ID .. spawn counter; creatures F13, vehicles F15.
+function M.NpcIdFromGUID(guid)
+    if type(guid) ~= "string" or #guid < 12 then return nil end
+    local kind = string.upper(guid:sub(3, 5))
+    if kind ~= "F13" and kind ~= "F15" then return nil end
+    return tonumber(guid:sub(8, 12), 16)
+end
+
+-- 10N/25N only. 3.3.5 raids: 1 = 10, 2 = 25, 3 = 10 heroic, 4 = 25 heroic; some cores report ICC
+-- heroic as 1/2 with the dynamic difficulty flag (GetInstanceInfo 6th value = 1) instead (see DBM-Core).
+function M.TearGasDifficultyOK()
+    local _, instType, diff, _, _, dynDiff, isDynamic = GetInstanceInfo()
+    if instType ~= "raid" then return false end
+    if GetInstanceDifficulty then diff = GetInstanceDifficulty() end
+    if diff ~= 1 and diff ~= 2 then return false end
+    return not (isDynamic and dynDiff == 1)
+end
+
+function M.FindPutricide()
+    for i = 1, 4 do
+        local u = "boss" .. i
+        if UnitExists(u) and M.NpcIdFromGUID(UnitGUID(u)) == M.TG.NPC then return u end
+    end
+    if UnitExists("target") and M.NpcIdFromGUID(UnitGUID("target")) == M.TG.NPC then return "target" end
+end
+
+function M.TearGasLead()
+    local v = tonumber(cfg.putricideInvisLead) or 1
+    return math.max(0.5, math.min(5, v))
+end
+
+function M.TearGasStart(castAt)
+    if M.tg and castAt - M.tg.castAt < 10 then return end -- same cast seen twice (log + UnitCastingInfo)
+    M.tg = { castAt = castAt, reengageAt = castAt + M.TG.REENGAGE_DEFAULT, estimate = true }
+end
+
+-- Expected re-engage in s from now (estimate = no drink cast or yell seen yet).
+function M.TearGasReengage(t, delay, now)
+    if not t or t.reengaged then return end
+    t.reengageAt, t.estimate = now + delay, false
+end
+
+-- Called from KR:COMBAT_LOG_EVENT_UNFILTERED (3.3.5 layout, spellId = 9th argument).
+function M.TearGasCombatLog(event, sourceGUID, destGUID, spellId)
+    if not cfg or not cfg.putricideInvis or not spellId then return end
+    local T, now = M.TG, GetTime()
+    if event == "SPELL_CAST_START" then
+        if spellId == T.CAST and M.NpcIdFromGUID(sourceGUID) == T.NPC and M.TearGasDifficultyOK() then
+            M.TearGasStart(now)
+        elseif T.CONCOCTION[spellId] then M.TearGasReengage(M.tg, T.DRINK_CAST + T.YELL1_DELAY, now)
+        elseif T.GUZZLE[spellId] then M.TearGasReengage(M.tg, T.DRINK_CAST + T.YELL2_DELAY, now) end
+    elseif not M.tg then return
+    elseif event == "SPELL_AURA_APPLIED" and spellId == T.STUN then
+        M.tg.landed = M.tg.landed or now
+    elseif (event == "SPELL_AURA_REMOVED" and spellId == T.STUN and (M.tg.landed or now - M.tg.castAt >= T.CAST_TIME)) or (event == "SPELL_CAST_SUCCESS" and spellId == T.CANCEL) then
+        if not M.tg.reengaged then M.tg.reengaged, M.tg.reengageAt, M.tg.estimate = now, now, false end
+    end
+end
+
+function KR:CHAT_MSG_MONSTER_YELL(msg)
+    if not M.tg or type(msg) ~= "string" then return end
+    for _, s in ipairs(M.TG.YELLS1) do if msg:find(s, 1, true) then return M.TearGasReengage(M.tg, M.TG.YELL1_DELAY, GetTime()) end end
+    for _, s in ipairs(M.TG.YELLS2) do if msg:find(s, 1, true) then return M.TearGasReengage(M.tg, M.TG.YELL2_DELAY, GetTime()) end end
+end
+
+-- Combat end: forget the transition (unless still invisible: then the timeout ends it) and the triggers.
+function M.TearGasCombatEnd()
+    if not (M.tg and HasBuff("player", nil, { [66] = true, [32612] = true })) then M.tg = nil end
+    wipe(M.tgFired)
+end
+
+-- Threat on Putricide too high for his re-engage: Ice Block if ready, else stop casting.
+function M.TearGasThreatReco()
+    if HasIceBlockAura() then return "wait", false, L("Eisblock: Seuchenmord wählt ein anderes Ziel") end
+    local unit = M.FindPutricide()
+    if not unit then return nil end
+    local tanking, status, scaled = UnitDetailedThreatSituation("player", unit)
+    if not (tanking or (status and status >= 2) or (scaled or 0) >= M.TG.THREAT_PCT) then return nil end
+    if SpellReady(spells.iceblock) then
+        return "ice", true, string.format(L("EISBLOCK: Bedrohung auf Seuchenmord %.0f%%"), scaled or 100)
+    end
+    return "wait", true, string.format(L("Bedrohung hoch (%.0f%%): Stop casten"), scaled or 100)
+end
+
+-- Returns reco, urgent, note like M.EmergencyReco, or nil. Sets M.tgHint (info line) and M.tgPaint
+-- (Invisibility button state painted after MarkRecommended). "wait" is no button: nothing to press.
+function M.TearGasReco()
+    M.tgHint, M.tgPaint = nil, nil
+    if not cfg.putricideInvis then M.tg = nil; return nil end
+    local T, now = M.TG, GetTime()
+    local t = M.tg
+    if t and (now - t.castAt > T.MAX_FOR or (t.reengaged and now - t.reengaged > T.THREAT_AFTER)) then M.tg, t = nil, nil end
+    if not M.TearGasDifficultyOK() then M.tg = nil; return nil end
+    local unit = M.FindPutricide()
+    if not t and unit then
+        local name, _, _, _, startMS = UnitCastingInfo(unit)
+        if name and name == GetSpellInfo(T.CAST) then M.TearGasStart(startMS and startMS / 1000 or now); t = M.tg end
+    end
+    local fading, fadeLeft = HasBuff("player", nil, { [66] = true })
+    local invis, invisLeft = HasBuff("player", nil, { [32612] = true })
+    local invisReady = M.KnowsSpell(66) and SpellReady(spells.invis)
+    local hp = unit and UnitHealthMax(unit) > 0 and (UnitHealth(unit) / UnitHealthMax(unit) * 100) or nil
+
+    if t then
+        if PlayerDebuffByNamesOrIds(nil, { [T.STUN] = true }) then return nil end -- stunned anyway
+        local landed = t.landed or now - t.castAt >= T.CAST_TIME
+        if not landed then
+            if fading or invis then return "wait", false, L("Unsichtbar: warten, bis das Tränengas landet") end
+            if invisReady and now - t.castAt <= T.FALLBACK_FOR then return "invis", true, L("JETZT Unsichtbarkeit: Tränengas") end
+            return nil
+        end
+        local left = math.max(t.reengageAt - now, 0)
+        local countdown = t.reengaged and L("Seuchenmord greift wieder an") or string.format(t.estimate and L("Seuchenmord greift in ~%.0f s wieder an") or L("Seuchenmord greift in %.0f s wieder an"), left)
+        if fading or invis then
+            M.tgHint = countdown
+            if SpellCooldownRemaining(spells.invis) > 1.5 then
+                M.tgPaint = "urgent"
+                return "invis", true, L("Unsichtbarkeit abbrechen, DPS auf Seuchenmord")
+            end
+            return "wait", true, L("Unsichtbarkeit abbrechen (Buff rechtsklicken), DPS auf Seuchenmord")
+        end
+        M.tgHint = countdown .. " - " .. L("Vorsicht Bedrohung beim Wiedereinsetzen")
+        if t.reengaged or left <= T.THREAT_LEAD then return M.TearGasThreatReco() end
+        return nil
+    end
+
+    if not unit or not hp then return nil end
+    local lead = M.TearGasLead()
+    for _, at in ipairs(T.THRESHOLDS) do
+        if hp > at and hp <= at + lead then
+            if fading or invis then
+                M.tgFired[at] = true
+                M.tgHint = string.format(L("Unsichtbar noch %.0f s - Seuchenmord %.1f%%"), invis and invisLeft or (fadeLeft or 0) + 20, hp)
+                return "wait", false, L("Unsichtbar: warten auf Tränengas")
+            elseif not M.tgFired[at] and invisReady then
+                M.tgHint = string.format(L("Seuchenmord %.1f%%"), hp)
+                return "invis", true, L("JETZT Unsichtbarkeit: Tränengas kommt")
+            end
+            M.tgHint = string.format(L("Gleich Tränengas (Seuchenmord %.1f%%)"), hp)
+            return nil
+        elseif hp > at + lead and hp <= at + lead + T.PREWARN then
+            M.tgHint = L("Gleich Tränengas: Unsichtbarkeit bereithalten")
+            M.tgPaint = "prep"
+            return nil
+        end
+    end
+    return nil
+end
+
+-- After MarkRecommended: blue pre-warning or urgent "cancel" (the button is on cooldown while invisible,
+-- which MarkRecommended would show as blue). The one-button stays empty while "wait" is recommended.
+function M.TearGasPaint(key)
+    if key == "wait" then M.OneButtonIdle(L("Warten")) end
+    if not M.tgPaint or not buttons.invis then return end
+    if M.tgPaint == "urgent" then ButtonSetState(buttons.invis, "urgent", 1)
+    elseif key ~= "invis" then ButtonSetState(buttons.invis, "prep", 0.80) end
+end
+
+function M.TearGasInfoText() return M.tgHint and ("  |cffff8020" .. M.tgHint .. "|r") or "" end
+
+function M.SetTearGas(on, lead)
+    if on ~= nil then cfg.putricideInvis = on end
+    if lead then cfg.putricideInvisLead = math.max(0.5, math.min(5, lead)) end
+    if not cfg.putricideInvis then M.tg = nil end
+end
+
 -- Emergencies and utility shared by every rotation: analyzer override (LK Invisibility, mandatory
 -- interrupts), Ice Block cancel, boss-cast and debuff Ice Block skips, ICC utility. filler = key of
 -- the rotation's filler (shown with a warning when Ice Block is on cooldown), moveKey = its instant
 -- for "move now". Returns nil when nothing applies.
 function M.EmergencyReco(filler, moveKey, utilType, utilNote, utilReady, utilCD)
+    local tgReco, tgUrgent, tgNote = M.TearGasReco() -- Putricide Tear Gas decides during its transition
+    if tgReco then return tgReco, tgUrgent, tgNote end
     local override = MageHelperAnalyzer_GetPriorityOverride and MageHelperAnalyzer_GetPriorityOverride()
     local iceAura = cfg.iceCancelHelper and HasIceBlockAura()
     local castSkipActive, castRemain, castName, castId, castIceReady, castIceCD, castData, castShouldBlock = ActiveIceblockCastSkip()
@@ -2936,7 +3176,7 @@ function M.SpellstealReco()
     return nil
 end
 
-function M.StealInfoText() return M.stealHint and ("  |cff66ccff" .. M.stealHint .. "|r") or "" end
+function M.StealInfoText() return (M.stealHint and ("  |cff66ccff" .. M.stealHint .. "|r") or "") .. M.TearGasInfoText() end
 
 -- Indicator above the rotation bar: the target's first stealable buff (icon, stacks, time left),
 -- orange border when it is on the worth list. Not secure, so it may change in combat.
@@ -3946,6 +4186,7 @@ end
 
 function KR:PLAYER_REGEN_ENABLED()
     RefreshOneButtonAfterCombat()
+    M.TearGasCombatEnd()
     if M.rotaPending then M.ApplyRotaMode() end
     RebuildSpellMacros() -- Icy Veins learned/unlearned or potion choice changed in combat
     if chr.moltenRestorePending then RestoreAfterMolten() end
@@ -3965,6 +4206,7 @@ end
 function KR:COMBAT_LOG_EVENT_UNFILTERED(...)
     local timestamp, event, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags = ...
     local playerGUID = UnitGUID("player")
+    M.TearGasCombatLog(event, sourceGUID, destGUID, (select(9, ...)))
 
     -- Analyzer damage / incoming / death recap ringbuffer
     if event == "SPELL_DAMAGE" or event == "RANGE_DAMAGE" then
@@ -4107,6 +4349,15 @@ local function HandleSlash(msg)
     elseif cmd == "buffet" then
         local n = tonumber(arg)
         if n then cfg.buffetStacks = n; print(string.format(L("MageHelper: Mystic-Buffet-Eisblock ab %s Stacks"), n)) end
+    elseif cmd:match("^tr..nengas$") or cmd == "teargas" then -- tränengas (ä = 2 bytes, whatever lower() did to them) / traenengas
+        local a = string.lower(arg or "")
+        local n = tonumber((a:gsub(",", ".")))
+        if a == "off" or a == "aus" then M.SetTearGas(false)
+        elseif n then M.SetTearGas(true, n)
+        elseif a == "on" or a == "an" then M.SetTearGas(true)
+        else print(L("/mh tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35")) end
+        if cfg.putricideInvis then print(string.format(L("MageHelper: Tränengas-Hilfe AN (Unsichtbarkeit %.1f%% über der Schwelle)"), M.TearGasLead()))
+        else print(L("MageHelper: Tränengas-Hilfe AUS")) end
     elseif cmd == "instability" then
         local n = tonumber(arg)
         if n then cfg.instabilityStacks = n; print(string.format(L("MageHelper: Instabilität-STOP ab %s Stacks"), n)) end
@@ -4250,6 +4501,7 @@ local function HandleSlash(msg)
         print(L("/mh utility on|off - ICC-Utility: Sindra/Putri/BQ/Lady an/aus"))
         print(L("/mh buffet 5 - Mystic Buffet Eisblock ab X Stacks"))
         print(L("/mh instability 5 - Stopcasting ab X Instabilität-Stapeln"))
+        print(L("/mh tränengas an|aus|0.5-5 - Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen, Zahl = Prozent über 80/35"))
         print(L("/mh debug on|off - Live-Debug: warum empfiehlt das Addon etwas"))
         print(L("/mh debug - Hot-Streak/Buffnamen einmal ausgeben"))
         print(L("v1.8: Hot Streak/Pyro hat Vorrang vor LB-Refresh, auch wenn LB gerade explodiert ist."))
@@ -4387,6 +4639,9 @@ local function SetupOptions(db)
                 iccUtility = toggle(L("ICC-Hinweise (Sindragosa, Putricide, Blutkönigin, Lady)"), 4),
                 buffetStacks = range(L("Mystic Buffet: Eisblock ab Stapeln"), 5, 1, 20, 1),
                 instabilityStacks = range(L("Instabilität: Stopcasting ab Stapeln"), 6, 1, 20, 1),
+                putricideInvis = toggle(L("Seuchenmord (normal): Tränengas mit Unsichtbarkeit umgehen"), 7, function(_, v) M.SetTearGas(v) end),
+                putricideInvisLead = range(L("Unsichtbarkeit so viele Prozent über 80 % / 35 % anfordern"), 8, 0.5, 5, 0.1),
+                putricideHelp = { type = "description", order = 9, name = L("Nur auf normal (10/25): Tränengas betäubt alle Spieler, bis Seuchenmord wieder angreift. Wer schon unsichtbar ist, wenn es landet, bleibt frei: Bei Seuchenmords Leben knapp über 80 % bzw. 35 % fordert der Unsichtbarkeit-Button rot auf, danach abbrechen und Seuchenmord allein schaden. Die Infozeile zählt bis zum Wiederangriff herunter; ist deine Bedrohung dann zu hoch, kommt Eisblock (oder Stop casten).") },
             } },
             focusMagic = { type = "group", name = L("Fokusmagie"), order = 4, args = {
                 status = { type = "description", order = 1, fontSize = "medium", name = function()
@@ -4476,7 +4731,8 @@ end
 
 local EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_DEAD", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED", "INSPECT_TALENT_READY",
     "PLAYER_TALENT_UPDATE", "UNIT_INVENTORY_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "CHARACTER_POINTS_CHANGED",
-    "UNIT_AURA", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED" }
+    "UNIT_AURA", "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED",
+    "CHAT_MSG_MONSTER_YELL" }
 
 function MH:OnEnable()
     CreateUI()
